@@ -10,7 +10,7 @@ export const DEFAULT_SETTINGS = {
   theme: 'system',
   showVisitCounts: true,
   openInNewTab: false,
-  pageSize: 200,
+  pageSize: 100,
   welcomeDismissed: false
 };
 
@@ -249,6 +249,16 @@ export function formatFullDate(value) {
 export function formatDay(value) {
   const date = new Date(value);
   return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
+}
+
+/**
+ * Chrome session timestamps have appeared in both seconds and milliseconds
+ * across versions. Normalise conservatively: anything before 2001 in ms is
+ * almost certainly a seconds value.
+ */
+export function toMillis(value) {
+  const timestamp = Number(value) || 0;
+  return timestamp > 0 && timestamp < 1e12 ? timestamp * 1000 : timestamp;
 }
 
 export function formatDateHeader(value, now = Date.now()) {

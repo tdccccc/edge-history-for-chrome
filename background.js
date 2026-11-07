@@ -12,7 +12,7 @@ const DEFAULT_SETTINGS = {
   theme: 'system',
   showVisitCounts: true,
   openInNewTab: false,
-  pageSize: 200,
+  pageSize: 100,
   welcomeDismissed: false
 };
 

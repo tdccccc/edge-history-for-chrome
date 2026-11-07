@@ -206,7 +206,7 @@ function createDemoChrome(params) {
   const api = {
     runtime: {
       getURL: (path) => path,
-      getManifest: () => ({ version: '1.0.0-demo' }),
+      getManifest: () => ({ version: '1.0.0' }),
       getContexts: undefined
     },
     storage: {

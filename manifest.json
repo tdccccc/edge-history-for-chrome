@@ -8,6 +8,7 @@
   "permissions": [
     "history",
     "sessions",
+    "tabs",
     "storage",
     "favicon"
   ],
@@ -15,7 +16,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "历史记录（Alt+H）",
+    "default_title": "历史记录",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
@@ -32,7 +33,7 @@
     "open-history": {
       "suggested_key": {
         "default": "Alt+H",
-        "mac": "Command+Shift+H"
+        "mac": "Alt+Shift+H"
       },
       "description": "打开完整历史记录"
     }
