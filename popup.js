@@ -11,8 +11,9 @@ import {
   formatTime,
   getChromeApi,
   getRangeBounds,
-  getSettings,
   groupItemsByDate,
+  loadSettings,
+  watchSettings,
   highlight,
   isDemo,
   isOwnExtensionPage,
@@ -32,6 +33,7 @@ const RANGES = ['all', 'hour', '24h', 'today', 'yesterday', '7d', '30d'];
 
 const state = {
   settings: {},
+  settingsArea: 'local',
   view: 'history',
   query: '',
   range: 'all',
@@ -72,12 +74,15 @@ async function init() {
   cacheDom();
   mountIcons();
 
-  state.settings = await getSettings();
+  const loadedSettings = await loadSettings();
+  state.settings = loadedSettings.settings;
+  state.settingsArea = loadedSettings.area;
   applyTheme();
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
     if (state.settings.theme === 'system') applyTheme();
   });
   bindEvents();
+  bindSettingsWatch();
 
   if (isDemo()) el.demoPill.hidden = false;
   updateShortcutHint();
@@ -141,6 +146,28 @@ function cacheDom() {
 }
 
 /* --------------------------------------------------------------- settings */
+
+let settingsWatchTimer = 0;
+
+function bindSettingsWatch() {
+  watchSettings((next) => {
+    window.clearTimeout(settingsWatchTimer);
+    settingsWatchTimer = window.setTimeout(() => applySettingsUpdate(next), 60);
+  });
+}
+
+function applySettingsUpdate(next) {
+  if (!next) return;
+  const previous = state.settings;
+  if (JSON.stringify(previous) === JSON.stringify(next)) return;
+
+  state.settings = next;
+  if (previous.theme !== next.theme) applyTheme();
+  if (previous.showVisitCounts !== next.showVisitCounts) renderHistory();
+  if (previous.mergeDuplicates !== next.mergeDuplicates && state.view === 'history') {
+    loadHistoryReset();
+  }
+}
 
 function applyTheme() {
   const resolved = resolveTheme(

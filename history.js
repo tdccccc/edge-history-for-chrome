@@ -17,9 +17,10 @@ import {
   formatTime,
   getChromeApi,
   getRangeBounds,
-  getSettings,
   getVersion,
   groupItemsByDate,
+  loadSettings,
+  watchSettings,
   highlight,
   isDemo,
   isEditableTarget,
@@ -87,6 +88,7 @@ const state = {
   selected: new Set(),
   collapsed: new Set(),
   settings: { ...DEFAULT_SETTINGS },
+  settingsArea: 'local',
   closed: [],
   closedLoaded: false,
   closedLoading: false,
@@ -128,12 +130,12 @@ async function init() {
   bindEvents();
   bindRuntimeMessages();
 
-  state.settings = await getSettings();
-  state.settings.theme = ['system', 'light', 'dark'].includes(state.settings.theme)
-    ? state.settings.theme
-    : 'system';
+  const loadedSettings = await loadSettings();
+  state.settings = loadedSettings.settings;
+  state.settingsArea = loadedSettings.area;
 
   setupTheme();
+  bindSettingsWatch();
   initFromUrl();
   state.queries[state.view] = state.query;
   updateSidebarShortcut();
@@ -246,6 +248,35 @@ function cacheDom() {
 }
 
 /* --------------------------------------------------------------- settings */
+
+let settingsWatchTimer = 0;
+
+function bindSettingsWatch() {
+  watchSettings((next) => {
+    window.clearTimeout(settingsWatchTimer);
+    settingsWatchTimer = window.setTimeout(() => applySettingsUpdate(next), 60);
+  });
+}
+
+/**
+ * Keep an already-open full page in step with the popup or another device.
+ * Only rerender what the changed preference actually affects.
+ */
+function applySettingsUpdate(next) {
+  if (!next) return;
+  const previous = state.settings;
+  if (JSON.stringify(previous) === JSON.stringify(next)) return;
+
+  state.settings = next;
+  if (previous.theme !== next.theme) applyTheme();
+  if (previous.showVisitCounts !== next.showVisitCounts) renderHistory();
+  if (previous.mergeDuplicates !== next.mergeDuplicates || previous.pageSize !== next.pageSize) {
+    if (state.view === 'history') {
+      state.loadedOnce = false;
+      loadHistoryReset();
+    }
+  }
+}
 
 function setupTheme() {
   state.themeMedia = window.matchMedia('(prefers-color-scheme: dark)');

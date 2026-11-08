@@ -3,17 +3,18 @@
  * Everything runs locally; there is no network access anywhere in the UI.
  */
 
+export {
+  DEFAULT_SETTINGS,
+  SETTINGS_KEYS,
+  ensureSettings,
+  getSettings,
+  loadSettings,
+  saveSettings,
+  watchSettings
+} from './settings.js';
+
 export const DAY_MS = 24 * 60 * 60 * 1000;
 export const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
-
-export const DEFAULT_SETTINGS = {
-  theme: 'system',
-  showVisitCounts: true,
-  openInNewTab: false,
-  pageSize: 100,
-  mergeDuplicates: true,
-  welcomeDismissed: false
-};
 
 export const TRANSITION_LABELS = {
   link: '点击链接',
@@ -486,25 +487,6 @@ export async function copyText(text) {
     return copied;
   } catch {
     return false;
-  }
-}
-
-export async function getSettings() {
-  const api = getChromeApi();
-  try {
-    const stored = await api.storage.local.get(DEFAULT_SETTINGS);
-    return { ...DEFAULT_SETTINGS, ...stored };
-  } catch {
-    return { ...DEFAULT_SETTINGS };
-  }
-}
-
-export async function saveSettings(patch) {
-  const api = getChromeApi();
-  try {
-    await api.storage.local.set(patch);
-  } catch {
-    // Settings are non-critical; the in-memory state still applies.
   }
 }
 

@@ -185,13 +185,60 @@ function createDemoChrome(params) {
     })).sort((a, b) => b.visitTime - a.visitTime);
   }
 
+  const requestedLanguage = params.get('lang') || '';
   const storageData = {
     theme: params.get('theme') || 'system',
+    language: requestedLanguage === 'en'
+      ? 'en'
+      : requestedLanguage.startsWith('zh') ? 'zh-CN' : 'system',
     showVisitCounts: true,
     openInNewTab: false,
     pageSize: 200,
     mergeDuplicates: true,
     welcomeDismissed: true
+  };
+
+  // Demo pages use the same sync-first settings API as the real extension.
+  // Both areas share one in-memory store so a save is visible everywhere.
+  const storageListeners = new Set();
+  function createStorageArea(areaName) {
+    return {
+      async get(defaults) {
+        if (!defaults || typeof defaults !== 'object' || Array.isArray(defaults)) {
+          return { ...storageData };
+        }
+        const result = {};
+        for (const [key, fallback] of Object.entries(defaults)) {
+          result[key] = key in storageData ? storageData[key] : fallback;
+        }
+        return result;
+      },
+      async set(patch) {
+        const previous = { ...storageData };
+        Object.assign(storageData, patch);
+        const changes = {};
+        for (const key of Object.keys(patch)) {
+          changes[key] = { oldValue: previous[key], newValue: storageData[key] };
+        }
+        for (const listener of [...storageListeners]) {
+          try {
+            listener(changes, areaName);
+          } catch {
+            // Demo listeners are best-effort, matching chrome.storage.
+          }
+        }
+      }
+    };
+  }
+  const storageLocal = createStorageArea('local');
+  const storageSync = createStorageArea('sync');
+  const storageOnChanged = {
+    addListener(listener) {
+      storageListeners.add(listener);
+    },
+    removeListener(listener) {
+      storageListeners.delete(listener);
+    }
   };
 
   function matchText(item, text) {
@@ -211,19 +258,9 @@ function createDemoChrome(params) {
       getContexts: undefined
     },
     storage: {
-      local: {
-        async get(defaults) {
-          if (!defaults || typeof defaults !== 'object') return { ...storageData };
-          const result = {};
-          for (const [key, fallback] of Object.entries(defaults)) {
-            result[key] = key in storageData ? storageData[key] : fallback;
-          }
-          return result;
-        },
-        async set(patch) {
-          Object.assign(storageData, patch);
-        }
-      }
+      local: storageLocal,
+      sync: storageSync,
+      onChanged: storageOnChanged
     },
     history: {
       async search({ text = '', startTime = 0, endTime = Date.now(), maxResults = 100 } = {}) {

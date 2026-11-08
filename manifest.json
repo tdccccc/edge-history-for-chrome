@@ -13,7 +13,8 @@
     "favicon"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
   "action": {
     "default_title": "历史记录",

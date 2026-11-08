@@ -6,16 +6,9 @@
  * owns install defaults, the toolbar shortcut and the one-time welcome page.
  */
 
-const HISTORY_PAGE = 'history.html';
+import { ensureSettings } from './shared/settings.js';
 
-const DEFAULT_SETTINGS = {
-  theme: 'system',
-  showVisitCounts: true,
-  openInNewTab: false,
-  pageSize: 100,
-  mergeDuplicates: true,
-  welcomeDismissed: false
-};
+const HISTORY_PAGE = 'history.html';
 
 async function openHistoryPage(suffix = '') {
   const baseUrl = chrome.runtime.getURL(HISTORY_PAGE);
@@ -45,13 +38,9 @@ async function openHistoryPage(suffix = '') {
 }
 
 chrome.runtime.onInstalled.addListener(async ({ reason }) => {
-  const stored = await chrome.storage.local.get(DEFAULT_SETTINGS);
-  await chrome.storage.local.set({
-    ...DEFAULT_SETTINGS,
-    ...stored,
-    // A fresh install should always see the welcome card.
-    welcomeDismissed: reason === 'install' ? false : Boolean(stored.welcomeDismissed)
-  });
+  // Migrate 1.2.0 local settings to sync; on a fresh install also make sure
+  // the welcome card is visible even if another device dismissed it.
+  await ensureSettings({ freshInstall: reason === 'install' });
 
   if (reason === 'install') {
     await openHistoryPage('?welcome=1');
