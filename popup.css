@@ -220,7 +220,42 @@ html[data-theme="dark"] .p-demo {
 .p-header-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
+}
+
+.p-open-full {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  gap: 4px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 550;
+  white-space: nowrap;
+  transition: background 0.13s var(--ease), color 0.13s var(--ease);
+}
+
+.p-open-full:hover {
+  background: var(--accent-soft-2);
+}
+
+.p-open-full > .icon {
+  width: 13px;
+  height: 13px;
+}
+
+.p-open-full-arrow {
+  display: flex;
+  color: var(--accent);
+  opacity: 0.65;
+}
+
+.p-open-full-arrow .icon {
+  width: 10px;
+  height: 10px;
 }
 
 .p-icon-btn {
@@ -674,68 +709,12 @@ html[data-theme="dark"] .p-demo {
   color: var(--danger);
 }
 
-/* ---------------------------------------------------------------- footer */
-
-.p-footer {
-  display: flex;
-  align-items: center;
-  flex: none;
-  gap: 9px;
-  padding: 9px 12px 10px;
-  border-top: 1px solid var(--border);
-  background: var(--surface);
-}
-
-.p-full-link {
-  display: flex;
-  align-items: center;
-  height: 34px;
-  flex: 1;
-  min-width: 0;
-  gap: 7px;
-  padding: 0 11px;
-  border-radius: 7px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 11.5px;
-  font-weight: 550;
-  text-align: left;
-}
-
-.p-full-link:hover {
-  background: var(--accent-soft-2);
-}
-
-.p-full-link .icon {
-  width: 15px;
-  height: 15px;
-}
-
-.p-full-arrow {
-  display: flex;
-  margin-left: auto;
-}
-
-.p-full-arrow .icon {
-  width: 12px;
-  height: 12px;
-}
-
-.p-shortcut {
-  display: flex;
-  align-items: center;
-  flex: none;
-  gap: 3px;
-  color: var(--text-3);
-  font-size: 8.5px;
-}
-
 /* ----------------------------------------------------------------- toast */
 
 .p-toast {
   position: absolute;
   right: 14px;
-  bottom: 57px;
+  bottom: 14px;
   left: 14px;
   z-index: 20;
   display: flex;

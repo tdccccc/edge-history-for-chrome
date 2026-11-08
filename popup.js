@@ -133,7 +133,6 @@ function cacheDom() {
     closedCount: document.getElementById('closedCount'),
     closedList: document.getElementById('closedList'),
     openFull: document.getElementById('openFull'),
-    shortcutHint: document.getElementById('shortcutHint'),
     demoPill: document.getElementById('demoPill'),
     toast: document.getElementById('toast')
   };
@@ -1041,9 +1040,11 @@ function showToast(message, type = 'info') {
 function updateShortcutHint() {
   const mac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || '')
     || /Macintosh/i.test(navigator.userAgent);
-  if (!mac) return;
-  el.shortcutHint.innerHTML = '<kbd>⌥</kbd><span>+</span><kbd>⇧</kbd><kbd>H</kbd>';
-  el.shortcutHint.title = 'Option + Shift + H';
+  const shortcut = mac ? 'Option + Shift + H' : 'Alt + H';
+  if (el.openFull) {
+    el.openFull.title = `打开完整历史记录（${shortcut}）`;
+    el.openFull.setAttribute('aria-label', el.openFull.title);
+  }
 }
 
 function friendlyError(error) {
