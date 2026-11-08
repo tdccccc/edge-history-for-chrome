@@ -11,8 +11,12 @@
     "sessions",
     "tabs",
     "storage",
-    "favicon"
+    "favicon",
+    "contextMenus"
   ],
+  "omnibox": {
+    "keyword": "hist"
+  },
   "background": {
     "service_worker": "background.js",
     "type": "module"

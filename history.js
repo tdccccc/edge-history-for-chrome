@@ -1738,8 +1738,10 @@ function bindRuntimeMessages() {
 
       if (message.action === 'settings') openSettings();
       else if (message.action === 'all') showAllHistory();
-      else if (message.action === 'search') searchFromExternal(message.query, message.range);
-      else if (message.action === 'range') searchFromExternal('', message.range);
+      else if (message.action === 'search') {
+        if (state.modalOpen) closeModal();
+        searchFromExternal(message.query, message.range);
+      } else if (message.action === 'range') searchFromExternal('', message.range);
       else if (message.action === 'history') focusHistoryView();
       else if (message.action === 'closed' || message.action === 'devices') switchView(message.action);
 

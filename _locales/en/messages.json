@@ -21,7 +21,7 @@
     "message": "Search history"
   },
   "omniboxSearch": {
-    "message": "Search history for “$1”",
+    "message": "Search history for “$TEXT$”",
     "placeholders": {
       "text": {
         "content": "$1",

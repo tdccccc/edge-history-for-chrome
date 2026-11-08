@@ -21,7 +21,7 @@
     "message": "搜索历史记录"
   },
   "omniboxSearch": {
-    "message": "在历史记录中搜索“$1”",
+    "message": "在历史记录中搜索“$TEXT$”",
     "placeholders": {
       "text": {
         "content": "$1",
