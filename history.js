@@ -1,5 +1,6 @@
 import './shared/demo.js';
 import { mountIcons, icon } from './shared/icons.js';
+import { applyI18n, setLanguage, t } from './shared/i18n.js';
 import {
   DEFAULT_SETTINGS,
   addDays,
@@ -52,19 +53,19 @@ const SEARCH_TIME_EPSILON = 1;
 
 const VIEW_META = {
   history: {
-    title: '历史记录',
-    subtitle: '按日期查看、搜索和管理你的浏览记录',
-    documentTitle: '历史记录'
+    titleKey: 'view.history.title',
+    subtitleKey: 'view.history.subtitle',
+    documentTitleKey: 'app.pageTitleHistory'
   },
   closed: {
-    title: '最近关闭',
-    subtitle: '恢复最近关闭的标签页或整个窗口',
-    documentTitle: '最近关闭'
+    titleKey: 'view.closed.title',
+    subtitleKey: 'view.closed.subtitle',
+    documentTitleKey: 'app.pageTitleClosed'
   },
   devices: {
-    title: '来自其他设备',
-    subtitle: '打开在其他设备上正在浏览的标签页',
-    documentTitle: '来自其他设备'
+    titleKey: 'view.devices.title',
+    subtitleKey: 'view.devices.subtitle',
+    documentTitleKey: 'app.pageTitleDevices'
   }
 };
 
@@ -120,7 +121,7 @@ const runSearch = debounce(() => commitSearch(), 220);
 init().catch((error) => {
   console.error('History page failed to initialise', error);
   if (el?.toastRegion) {
-    showToast(`页面初始化失败：${friendlyError(error)}`, 'error', 6000);
+    showToast(t('history.initError', { error: friendlyError(error) }), 'error', 6000);
   }
 });
 
@@ -133,6 +134,8 @@ async function init() {
   const loadedSettings = await loadSettings();
   state.settings = loadedSettings.settings;
   state.settingsArea = loadedSettings.area;
+  setLanguage(state.settings.language);
+  applyI18n(document);
 
   setupTheme();
   bindSettingsWatch();
@@ -146,7 +149,7 @@ async function init() {
 
   if (isDemo()) el.demoBadge.hidden = false;
   el.versionLabel.textContent = `v${getVersion().replace(/-.*$/, '')}`;
-  el.shortcutCard.title = '可在 chrome://extensions/shortcuts 中修改';
+  updateSidebarShortcut();
 
   try {
     api.sessions.onChanged.addListener?.(debounce(() => {
@@ -160,7 +163,7 @@ async function init() {
   }
 
   if (!api?.history) {
-    state.error = new Error('无法访问 Chrome 历史记录 API。请通过扩展页面打开，或使用 ?demo=1 预览。');
+    state.error = new Error(t('history.apiError'));
     state.loadedOnce = true;
     renderHistory();
     updateResultCount();
@@ -252,22 +255,45 @@ function cacheDom() {
 let settingsWatchTimer = 0;
 
 function bindSettingsWatch() {
-  watchSettings((next) => {
+  watchSettings((next, meta) => {
     window.clearTimeout(settingsWatchTimer);
-    settingsWatchTimer = window.setTimeout(() => applySettingsUpdate(next), 60);
+    settingsWatchTimer = window.setTimeout(() => applySettingsUpdate(next, meta), 60);
   });
+}
+
+/**
+ * Re-apply every string that is generated rather than marked with data-i18n.
+ * Static markup is handled by applyI18n; loaded lists are rebuilt so their
+ * date headers, counts and action labels switch language too.
+ */
+function applyLanguagePreference(preference) {
+  setLanguage(preference);
+  applyI18n(document);
+  updateSidebarShortcut();
+  syncViewChrome();
+  updateSearchPlaceholder();
+  updateRangeUI();
+  updateResultCount();
+  updateBulkBar();
+  updateRefreshButton();
+  if (state.loadedOnce) renderHistory();
+  if (state.closedLoaded) renderClosed();
+  if (state.devicesLoaded) renderDevices();
+  if (state.modalOpen && el.modalLayer.querySelector('#languageSelect')) openSettings();
 }
 
 /**
  * Keep an already-open full page in step with the popup or another device.
  * Only rerender what the changed preference actually affects.
  */
-function applySettingsUpdate(next) {
+function applySettingsUpdate(next, meta) {
   if (!next) return;
   const previous = state.settings;
   if (JSON.stringify(previous) === JSON.stringify(next)) return;
 
   state.settings = next;
+  if (meta?.area) state.settingsArea = meta.area;
+  if (previous.language !== next.language) applyLanguagePreference(next.language);
   if (previous.theme !== next.theme) applyTheme();
   if (previous.showVisitCounts !== next.showVisitCounts) renderHistory();
   if (previous.mergeDuplicates !== next.mergeDuplicates || previous.pageSize !== next.pageSize) {
@@ -302,18 +328,16 @@ function applyTheme() {
       : 'sun';
   el.themeBtn.innerHTML = icon(iconName);
   const label = state.settings.theme === 'system'
-    ? `跟随系统（当前${resolved === 'dark' ? '深色' : '浅色'}）`
-    : resolved === 'dark'
-      ? '深色'
-      : '浅色';
-  el.themeBtn.title = `主题：${label}，点击切换`;
+    ? t(resolved === 'dark' ? 'theme.systemDark' : 'theme.systemLight')
+    : t(resolved === 'dark' ? 'theme.dark' : 'theme.light');
+  el.themeBtn.title = t('theme.toggleTitle', { label });
   el.themeBtn.setAttribute('aria-label', el.themeBtn.title);
 }
 
 function setTheme(theme) {
   if (!['system', 'light', 'dark'].includes(theme)) return;
   state.settings.theme = theme;
-  saveSettings({ theme });
+  persistSettings({ theme });
   applyTheme();
   document.querySelectorAll('[data-theme-value]').forEach((button) => {
     button.classList.toggle('is-active', button.dataset.themeValue === theme);
@@ -375,9 +399,9 @@ function updateUrlState() {
 
 function syncViewChrome() {
   const meta = VIEW_META[state.view];
-  el.pageTitle.textContent = meta.title;
-  el.pageSubtitle.textContent = meta.subtitle;
-  document.title = `${meta.documentTitle} · Edge 风格历史记录`;
+  el.pageTitle.textContent = t(meta.titleKey);
+  el.pageSubtitle.textContent = t(meta.subtitleKey);
+  document.title = t(meta.documentTitleKey);
   el.app.dataset.view = state.view;
 
   el.historyToolbar.hidden = false;
@@ -629,11 +653,11 @@ function refreshVisitChips(ids) {
     if (!chip) {
       chip = document.createElement('span');
       chip.className = 'visit-chip';
-      chip.title = `${item.visitCount} 次访问`;
+      chip.title = t('count.visits', { count: item.visitCount });
       row.querySelector('.row-meta')?.prepend(chip);
     }
-    chip.textContent = `${formatCount(item.visitCount)} 次`;
-    chip.title = `${item.visitCount} 次访问`;
+    chip.textContent = t('count.visitsShort', { count: item.visitCount });
+    chip.title = t('count.visits', { count: item.visitCount });
   }
 }
 
@@ -659,9 +683,9 @@ function renderHistory() {
     el.historyList.innerHTML = emptyMarkup({
       iconName: 'alert',
       error: true,
-      title: '无法读取历史记录',
+      title: t('history.readErrorTitle'),
       text: friendlyError(state.error),
-      actions: '<button class="btn btn-primary" type="button" data-action="retry-history">重试</button>'
+      actions: `<button class="btn btn-primary" type="button" data-action="retry-history">${t('common.retry')}</button>`
     });
   } else if (!state.items.length && state.loading) {
     el.historyList.innerHTML = skeletonMarkup();
@@ -683,7 +707,7 @@ function groupMarkup(group) {
       <button class="group-head" type="button" data-action="toggle-group" data-group-key="${escapeHtml(group.key)}" aria-expanded="${String(!collapsed)}">
         <span class="group-chevron">${icon('chevron-down')}</span>
         <span class="group-title">${escapeHtml(group.label)}</span>
-        <span class="group-count">${formatCount(group.items.length)} 条</span>
+        <span class="group-count">${t('count.group', { count: group.items.length })}</span>
         <span class="group-line" aria-hidden="true"></span>
       </button>
       <div class="group-body"${collapsed ? ' hidden' : ''}>
@@ -707,7 +731,7 @@ function appendHistoryItems(items) {
       body.insertAdjacentHTML('beforeend', group.items.map(rowMarkup).join(''));
       const count = body.querySelectorAll('.history-row').length;
       const countEl = existing.querySelector('.group-count');
-      if (countEl) countEl.textContent = `${formatCount(count)} 条`;
+      if (countEl) countEl.textContent = t('count.group', { count });
       const collapsed = existing.classList.contains('is-collapsed');
       existing.style.containIntrinsicSize = `auto ${collapsed ? 43 : count * 56 + 43}px`;
     } else {
@@ -722,12 +746,12 @@ function rowMarkup(item) {
   const selected = state.selected.has(item._id);
   const favicon = faviconUrl(item.url, 32);
   const visitChip = state.settings.showVisitCounts && item.visitCount > 1
-    ? `<span class="visit-chip" title="${item.visitCount} 次访问">${formatCount(item.visitCount)} 次</span>`
+    ? `<span class="visit-chip" title="${escapeHtml(t('count.visits', { count: item.visitCount }))}">${escapeHtml(t('count.visitsShort', { count: item.visitCount }))}</span>`
     : '';
 
   return `
     <article class="history-row${selected ? ' is-selected' : ''}" data-id="${item._id}" role="listitem">
-      <label class="row-check" aria-label="选择 ${escapeHtml(title)}">
+      <label class="row-check" aria-label="${escapeHtml(t('history.rowSelect', { title }))}">
         <input type="checkbox" data-role="check" ${selected ? 'checked' : ''}>
       </label>
       ${faviconMarkup(item.url, title, favicon)}
@@ -742,7 +766,7 @@ function rowMarkup(item) {
         ${visitChip}
         <time class="row-time" datetime="${new Date(item.lastVisitTime).toISOString()}" title="${escapeHtml(formatFullDate(item.lastVisitTime))}">${formatTime(item.lastVisitTime)}</time>
       </div>
-      <button class="icon-btn row-more" type="button" data-role="menu" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false" title="更多操作">${icon('more')}</button>
+      <button class="icon-btn row-more" type="button" data-role="menu" aria-label="${escapeHtml(t('history.rowMore'))}" aria-haspopup="menu" aria-expanded="false" title="${escapeHtml(t('history.rowMore'))}">${icon('more')}</button>
     </article>`;
 }
 
@@ -756,7 +780,7 @@ function faviconMarkup(url, title, precomputedUrl = '') {
 }
 
 function skeletonMarkup(count = 8) {
-  return `<div class="skeleton-list" aria-label="正在加载历史记录">${Array.from({ length: count }, () => `
+  return `<div class="skeleton-list" aria-label="${escapeHtml(t('history.listAria'))}">${Array.from({ length: count }, () => `
     <div class="skeleton-row">
       <div class="skeleton-block sk-icon"></div>
       <div class="sk-lines">
@@ -781,27 +805,27 @@ function emptyHistoryMarkup() {
   if (state.query) {
     return emptyMarkup({
       iconName: 'search',
-      title: '未找到相关历史记录',
-      text: `没有与“${state.query}”匹配的标题或网址。试试其他关键词，或调整时间范围。`,
+      title: t('history.noResultsTitle'),
+      text: t('history.noResultsText', { query: state.query }),
       actions: `
-        <button class="btn btn-primary" type="button" data-action="clear-search">清除搜索</button>
-        ${state.range !== 'all' ? '<button class="btn btn-ghost" type="button" data-action="show-all">显示全部时间</button>' : ''}`
+        <button class="btn btn-primary" type="button" data-action="clear-search">${t('common.clearSearch')}</button>
+        ${state.range !== 'all' ? `<button class="btn btn-ghost" type="button" data-action="show-all">${t('common.showAllTime')}</button>` : ''}`
     });
   }
 
   if (state.range !== 'all') {
     return emptyMarkup({
       iconName: 'calendar',
-      title: '此时间范围内没有历史记录',
-      text: `当前筛选范围是“${formatRangeLabel(state.range, state.custom)}”。可以换个时间范围，或查看全部记录。`,
-      actions: '<button class="btn btn-primary" type="button" data-action="show-all">显示全部时间</button>'
+      title: t('history.emptyRangeTitle'),
+      text: t('history.emptyRangeText', { range: formatRangeLabel(state.range, state.custom) }),
+      actions: `<button class="btn btn-primary" type="button" data-action="show-all">${t('common.showAllTime')}</button>`
     });
   }
 
   return emptyMarkup({
     iconName: 'history',
-    title: '还没有历史记录',
-    text: '打开一些网页后，你的浏览记录会按日期出现在这里。也可以试着搜索标题或网址。'
+    title: t('history.emptyTitle'),
+    text: t('history.emptyText')
   });
 }
 
@@ -824,20 +848,20 @@ function renderFooter() {
   if (!state.items.length) {
     html = '';
   } else if (state.loading) {
-    html = '<span class="spinner" aria-hidden="true"></span><span>正在加载更多…</span>';
+    html = `<span class="spinner" aria-hidden="true"></span><span>${t('common.loadingMore')}</span>`;
   } else if (state.error) {
     html = `
       ${icon('alert')}
-      <span>加载失败：${escapeHtml(friendlyError(state.error))}</span>
-      <button class="btn btn-quiet" type="button" data-action="retry-history">重试</button>`;
+      <span>${escapeHtml(t('history.loadFailed', { error: friendlyError(state.error) }))}</span>
+      <button class="btn btn-quiet" type="button" data-action="retry-history">${t('common.retry')}</button>`;
   } else if (state.exhausted) {
     html = `
       <span class="end-mark" aria-hidden="true"></span>
-      <span>已显示全部 ${formatCount(state.items.length)} 条记录</span>`;
+      <span>${escapeHtml(t('history.allLoaded', { count: state.items.length }))}</span>`;
   } else {
     html = `
-      <span>继续滚动以加载更多</span>
-      <button class="btn btn-quiet" type="button" data-action="load-more">加载更多</button>`;
+      <span>${t('history.scrollMore')}</span>
+      <button class="btn btn-quiet" type="button" data-action="load-more">${t('common.loadMore')}</button>`;
   }
 
   el.listFooter.innerHTML = html;
@@ -849,13 +873,13 @@ function updateResultCount() {
   if (!state.loadedOnce) {
     el.resultCount.textContent = '';
   } else if (state.loading && !state.items.length) {
-    el.resultCount.textContent = '正在加载…';
+    el.resultCount.textContent = t('count.loading');
   } else if (!state.items.length) {
-    el.resultCount.textContent = state.error ? '加载失败' : '0 条';
+    el.resultCount.textContent = state.error ? t('count.failed') : t('count.zero');
   } else if (state.exhausted) {
-    el.resultCount.textContent = `共 ${formatCount(state.items.length)} 条`;
+    el.resultCount.textContent = t('count.total', { count: state.items.length });
   } else {
-    el.resultCount.textContent = `已加载 ${formatCount(state.items.length)} 条`;
+    el.resultCount.textContent = t('count.loaded', { count: state.items.length });
   }
 }
 
@@ -867,12 +891,12 @@ function enterSelectMode({ keepSelection = false } = {}) {
   if (!keepSelection) state.selected.clear();
   el.app.classList.add('selecting');
   el.selectBtn.setAttribute('aria-pressed', 'true');
-  el.selectBtn.querySelector('span').textContent = '完成';
+  el.selectBtn.querySelector('span').textContent = t('common.done');
   el.bulkBar.hidden = false;
   updateAllSelectionVisuals();
   updateBulkBar();
   window.requestAnimationFrame(() => el.bulkBar.classList.add('is-visible'));
-  announce('已进入选择模式');
+  announce(t('history.selectModeAnnounce'));
 }
 
 function exitSelectMode() {
@@ -881,7 +905,7 @@ function exitSelectMode() {
   state.selected.clear();
   el.app.classList.remove('selecting');
   el.selectBtn.setAttribute('aria-pressed', 'false');
-  el.selectBtn.querySelector('span').textContent = '选择';
+  el.selectBtn.querySelector('span').textContent = t('common.select');
   el.bulkBar.classList.remove('is-visible');
   el.bulkBar.hidden = true;
   updateAllSelectionVisuals();
@@ -920,9 +944,11 @@ function updateAllSelectionVisuals() {
 function updateBulkBar() {
   const count = state.selected.size;
   const allSelected = state.items.length > 0 && count === state.items.length;
-  el.bulkCount.innerHTML = `已选择 <strong>${formatCount(count)}</strong> 项`;
+  el.bulkCount.innerHTML = t('history.bulkSelectedHtml', {
+    count: `<strong>${formatCount(count)}</strong>`
+  });
   el.bulkDeleteBtn.disabled = count === 0;
-  el.selectAllBtn.textContent = allSelected ? '取消全选' : '全选已加载';
+  el.selectAllBtn.textContent = allSelected ? t('history.deselectAll') : t('history.selectAll');
 }
 
 function toggleSelectAll() {
@@ -940,17 +966,17 @@ async function deleteSelected() {
   if (!items.length) return;
 
   const confirmed = await showConfirm({
-    title: '删除选中的历史记录？',
-    message: `将删除选中的 ${items.length} 条记录的全部浏览记录。Chrome 以网址为单位保存历史，删除会移除这些网址的所有访问记录，而不是只删除某一次访问。`,
-    note: '此操作无法撤销，也不会删除 Cookie、缓存或书签。',
-    confirmLabel: '删除'
+    title: t('history.bulkDeleteTitle'),
+    message: t('history.bulkDeleteMessage', { count: items.length }),
+    note: t('history.bulkDeleteNote'),
+    confirmLabel: t('common.delete')
   });
   if (!confirmed) return;
 
   const urls = items.flatMap((item) => item.mergedUrls?.length ? item.mergedUrls : [item.url]);
   const deleted = await deleteItemUrls(urls);
-  if (deleted > 0) showToast(`已删除 ${formatCount(items.length)} 条记录`, 'success');
-  else showToast('没有记录被删除，请重试', 'error');
+  if (deleted > 0) showToast(t('count.deleted', { count: items.length }), 'success');
+  else showToast(t('history.deleteNothing'), 'error');
   if (!state.items.length && state.selectMode) exitSelectMode();
 }
 
@@ -1006,16 +1032,16 @@ function openRowMenu(id, anchor) {
   const site = siteLabelOf(item.url);
   const entries = [];
 
-  if (openable) entries.push({ action: 'open', icon: 'external', label: '在新标签页中打开' });
-  entries.push({ action: 'copy', icon: 'copy', label: '复制链接' });
-  entries.push({ action: 'visits', icon: 'clock', label: '查看访问记录' });
+  if (openable) entries.push({ action: 'open', icon: 'external', label: t('history.menuOpen') });
+  entries.push({ action: 'copy', icon: 'copy', label: t('history.menuCopy') });
+  entries.push({ action: 'visits', icon: 'clock', label: t('history.menuVisits') });
   entries.push({ divider: true });
-  entries.push({ action: 'delete', icon: 'trash', label: '删除此记录', danger: true });
+  entries.push({ action: 'delete', icon: 'trash', label: t('history.menuDelete'), danger: true });
   if (http) {
     entries.push({
       action: 'delete-site',
       icon: 'trash',
-      label: `删除 ${site || '此站点'} 的所有记录`,
+      label: site ? t('history.menuDeleteSite', { site }) : t('history.menuDeleteSiteFallback'),
       danger: true
     });
   }
@@ -1069,7 +1095,7 @@ async function onRowMenuAction(action) {
 
   if (action === 'copy') {
     const copied = await copyText(item.url);
-    showToast(copied ? '链接已复制' : '复制失败，请手动选择网址', copied ? 'success' : 'error');
+    showToast(copied ? t('history.copySuccess') : t('history.copyFailure'), copied ? 'success' : 'error');
     return;
   }
 
@@ -1092,19 +1118,23 @@ async function deleteItem(item) {
   const title = normalizeTitle(item.title, item.url);
   const urls = item.mergedUrls?.length ? item.mergedUrls : [item.url];
   const mergedNote = urls.length > 1
-    ? `这条记录合并了 ${urls.length} 个网址变体，会一并删除。`
+    ? t('history.deleteMergedNote', { count: urls.length })
     : '';
   const confirmed = await showConfirm({
-    title: '删除此历史记录？',
-    message: `将删除“${title}”的全部访问记录（共 ${item.visitCount || 1} 次）。${mergedNote}Chrome 以网址为单位保存历史，因此无法只删除其中一次访问。`,
-    note: '此操作无法撤销。',
-    confirmLabel: '删除'
+    title: t('history.deleteTitle'),
+    message: t('history.deleteMessage', {
+      title,
+      visits: t('count.visits', { count: item.visitCount || 1 }),
+      mergedNote
+    }),
+    note: t('history.deleteNote'),
+    confirmLabel: t('common.delete')
   });
   if (!confirmed) return;
 
   const index = state.items.findIndex((candidate) => candidate._id === item._id);
   const deleted = await deleteItemUrls(urls);
-  showToast(deleted ? '已删除该记录' : '删除失败，请重试', deleted ? 'success' : 'error');
+  showToast(deleted ? t('history.deleteSuccess') : t('history.deleteFailed'), deleted ? 'success' : 'error');
   if (!deleted) return;
 
   const next = state.items[Math.min(Math.max(index, 0), state.items.length - 1)];
@@ -1121,14 +1151,14 @@ async function deleteSite(item) {
   const label = host.replace(/^www\./, '');
 
   const confirmed = await showConfirm({
-    title: '删除此站点的历史记录？',
-    message: `将删除 ${label} 这个主机下所有网址的全部浏览记录（不含子域名），包括当前页面中尚未显示的记录。Chrome 的历史记录以网址为单位，无法只删除某一次访问。`,
-    note: '此操作无法撤销，可能需要几秒钟。',
-    confirmLabel: '全部删除'
+    title: t('history.deleteSiteTitle'),
+    message: t('history.deleteSiteMessage', { label }),
+    note: t('history.deleteSiteNote'),
+    confirmLabel: t('history.deleteSiteConfirm')
   });
   if (!confirmed) return;
 
-  showToast(`正在删除 ${label} 的历史记录…`, 'info', 5000);
+  showToast(t('history.deleteSiteProgress', { label }), 'info', 5000);
   let collected = { urls: new Set(), complete: false };
   try {
     collected = await collectSiteUrls(host);
@@ -1145,11 +1175,11 @@ async function deleteSite(item) {
 
   const deleted = await deleteItemUrls([...urls]);
   if (!deleted) {
-    showToast('没有记录被删除，请重试', 'error');
+    showToast(t('history.deleteNothing'), 'error');
   } else if (!collected.complete) {
-    showToast(`已删除 ${formatCount(deleted)} 条；部分站点记录未能收集，可能仍有剩余`, 'error', 5000);
+    showToast(t('history.deleteSitePartial', { count: deleted }), 'error', 5000);
   } else {
-    showToast(`已删除 ${label} 的 ${formatCount(deleted)} 条记录`, 'success');
+    showToast(t('history.deleteSiteSuccess', { count: deleted, label }), 'success');
   }
   if (!state.items.length && state.selectMode) exitSelectMode();
 }
@@ -1209,14 +1239,14 @@ function openVisits(item) {
       </div>
     </div>
     <div id="visitBody">
-      <div class="modal-loading"><span class="spinner" aria-hidden="true"></span><span>正在读取访问明细…</span></div>
+      <div class="modal-loading"><span class="spinner" aria-hidden="true"></span><span>${t('history.visits.loading')}</span></div>
     </div>`;
 
   openModal({
-    title: '访问记录',
+    title: t('history.visits.title'),
     bodyHtml: body,
     wide: true,
-    footerHtml: '<button class="btn btn-ghost" type="button" data-modal-close>关闭</button>',
+    footerHtml: `<button class="btn btn-ghost" type="button" data-modal-close>${t('common.close')}</button>`,
     onMount(modal) {
       const container = modal.querySelector('#visitBody');
       api.history.getVisits({ url: item.url }).then((visits) => {
@@ -1227,15 +1257,20 @@ function openVisits(item) {
         const shown = sorted.slice(0, 300);
 
         container.innerHTML = `
-          <div class="visit-summary">该网址共有 ${formatCount(sorted.length)} 次访问${sorted.length > shown.length ? `，下面显示最近 ${formatCount(shown.length)} 次` : ''}。</div>
+          <div class="visit-summary">${escapeHtml(t('history.visits.summary', {
+            visits: t('count.visits', { count: sorted.length }),
+            truncated: sorted.length > shown.length
+              ? t('history.visits.truncated', { shown: formatCount(shown.length) })
+              : ''
+          }))}</div>
           ${shown.length ? `<div class="visit-list">${shown.map((visit) => `
             <div class="visit-row">
               <span class="visit-time">${escapeHtml(formatFullDate(visit.visitTime))}</span>
               <span class="visit-transition">${escapeHtml(transitionLabel(visit.transition))}</span>
-            </div>`).join('')}</div>` : '<div class="empty"><p>没有可用的访问明细。</p></div>'}`;
+            </div>`).join('')}</div>` : `<div class="empty"><p>${escapeHtml(t('history.visits.empty'))}</p></div>`}`;
       }).catch((error) => {
         if (!modal.isConnected || !container) return;
-        container.innerHTML = `<div class="modal-callout is-warning">${icon('alert')}<span>无法读取访问明细：${escapeHtml(friendlyError(error))}</span></div>`;
+        container.innerHTML = `<div class="modal-callout is-warning">${icon('alert')}<span>${escapeHtml(t('history.visits.error', { error: friendlyError(error) }))}</span></div>`;
       });
     }
   });
@@ -1300,17 +1335,19 @@ function renderClosed() {
   const sessions = filteredClosedSessions();
 
   if (state.closedLoading) {
-    el.closedMeta.textContent = state.closedLoaded ? `正在刷新 · ${state.closed.length} 个关闭项` : '正在读取…';
+    el.closedMeta.textContent = state.closedLoaded
+      ? `${t('common.refreshing')} · ${t('count.closed', { count: state.closed.length })}`
+      : t('closed.metaLoading');
   } else if (state.closedError) {
-    el.closedMeta.textContent = '读取失败';
+    el.closedMeta.textContent = t('closed.metaFailed');
   } else if (state.query) {
-    el.closedMeta.textContent = `${formatCount(sessions.length)} 个匹配项`;
+    el.closedMeta.textContent = t('count.matches', { count: sessions.length });
   } else {
-    el.closedMeta.textContent = `${formatCount(state.closed.length)} 个关闭项`;
+    el.closedMeta.textContent = t('count.closed', { count: state.closed.length });
   }
 
   if (state.closedLoading && !state.closed.length) {
-    el.closedList.innerHTML = `<div class="empty"><span class="spinner" aria-hidden="true"></span><h2>正在读取最近关闭的记录</h2></div>`;
+    el.closedList.innerHTML = `<div class="empty"><span class="spinner" aria-hidden="true"></span><h2>${t('closed.loadingTitle')}</h2></div>`;
     return;
   }
 
@@ -1318,9 +1355,9 @@ function renderClosed() {
     el.closedList.innerHTML = emptyMarkup({
       iconName: 'alert',
       error: true,
-      title: '无法读取最近关闭的标签页',
+      title: t('closed.readErrorTitle'),
       text: friendlyError(state.closedError),
-      actions: '<button class="btn btn-primary" type="button" data-action="refresh-closed">重试</button>'
+      actions: `<button class="btn btn-primary" type="button" data-action="refresh-closed">${t('common.retry')}</button>`
     });
     return;
   }
@@ -1328,9 +1365,9 @@ function renderClosed() {
   if (!state.closed.length) {
     el.closedList.innerHTML = emptyMarkup({
       iconName: 'restore',
-      title: '没有最近关闭的标签页',
-      text: '关闭标签页或窗口后，它们会出现在这里，可以一键恢复。',
-      actions: '<button class="btn btn-quiet" type="button" data-action="refresh-closed">刷新</button>'
+      title: t('closed.emptyTitle'),
+      text: t('closed.emptyText'),
+      actions: `<button class="btn btn-quiet" type="button" data-action="refresh-closed">${t('common.refresh')}</button>`
     });
     return;
   }
@@ -1338,9 +1375,9 @@ function renderClosed() {
   if (!sessions.length) {
     el.closedList.innerHTML = emptyMarkup({
       iconName: 'search',
-      title: '没有匹配的关闭项',
-      text: `没有与“${state.query}”匹配的已关闭标签页。`,
-      actions: '<button class="btn btn-primary" type="button" data-action="clear-search">清除搜索</button>'
+      title: t('closed.noMatchesTitle'),
+      text: t('closed.noMatchesText', { query: state.query }),
+      actions: `<button class="btn btn-primary" type="button" data-action="clear-search">${t('common.clearSearch')}</button>`
     });
     return;
   }
@@ -1353,7 +1390,7 @@ function sessionMarkup(session, index) {
 
   if (session.tab) {
     const tab = session.tab;
-    const title = normalizeTitle(tab.title, tab.url) || '未命名标签页';
+    const title = normalizeTitle(tab.title, tab.url) || t('closed.unnamedTab');
     return `
       <article class="session-card is-single">
         <div class="single-session">
@@ -1364,7 +1401,7 @@ function sessionMarkup(session, index) {
           </div>
           <span class="single-session-time">${escapeHtml(time)}</span>
           <button class="btn btn-soft session-restore" type="button" data-action="restore" data-session-index="${index}">
-            ${icon('restore')}<span>恢复</span>
+            ${icon('restore')}<span>${t('closed.restore')}</span>
           </button>
         </div>
       </article>`;
@@ -1376,11 +1413,11 @@ function sessionMarkup(session, index) {
       <div class="session-head">
         <span class="session-window-icon">${icon('window')}</span>
         <div class="session-head-copy">
-          <strong>窗口 · ${pluralTabs(tabs.length)}</strong>
-          <span>${escapeHtml(time || '最近关闭')}</span>
+          <strong>${escapeHtml(t('closed.windowTitle', { tabs: pluralTabs(tabs.length) }))}</strong>
+          <span>${escapeHtml(time || t('closed.unknownTime'))}</span>
         </div>
         <button class="btn btn-soft session-restore" type="button" data-action="restore" data-session-index="${index}">
-          ${icon('restore')}<span>恢复窗口</span>
+          ${icon('restore')}<span>${t('closed.restoreWindow')}</span>
         </button>
       </div>
       <div class="session-tabs">
@@ -1390,7 +1427,7 @@ function sessionMarkup(session, index) {
 }
 
 function sessionTabMarkup(tab) {
-  const title = normalizeTitle(tab.title, tab.url) || '未命名标签页';
+  const title = normalizeTitle(tab.title, tab.url) || t('closed.unnamedTab');
   return `
     <a class="session-tab" href="${hrefFor(tab.url)}" data-open-url="${escapeHtml(tab.url)}">
       ${faviconMarkup(tab.url, title)}
@@ -1428,11 +1465,11 @@ async function restoreSession(index) {
     renderClosed();
     updateRefreshButton();
 
-    showToast(session.window ? '已恢复窗口' : '已恢复标签页', 'success');
+    showToast(session.window ? t('closed.restoredWindow') : t('closed.restoredTab'), 'success');
     await loadClosed(true);
   } catch (error) {
     console.error('Failed to restore session', error);
-    showToast(`恢复失败：${friendlyError(error)}`, 'error');
+    showToast(t('closed.restoreFailedWithError', { error: friendlyError(error) }), 'error');
     trigger?.classList.remove('is-restoring');
     if (trigger) trigger.disabled = false;
   } finally {
@@ -1495,20 +1532,20 @@ function renderDevices() {
 
   if (state.devicesLoading) {
     el.devicesMeta.textContent = state.devicesLoaded
-      ? `正在刷新 · ${formatCount(state.devices.length)} 台设备`
-      : '正在读取…';
+      ? `${t('common.refreshing')} · ${t('count.devices', { count: state.devices.length })}`
+      : t('devices.metaLoading');
   } else if (state.devicesError) {
-    el.devicesMeta.textContent = '读取失败';
+    el.devicesMeta.textContent = t('devices.metaFailed');
   } else if (state.query) {
-    el.devicesMeta.textContent = `${formatCount(devices.length)} 台设备 · ${formatCount(totalTabs)} 个匹配标签页`;
+    el.devicesMeta.textContent = `${t('count.devices', { count: devices.length })} · ${t('count.matchingTabs', { count: totalTabs })}`;
   } else if (state.devices.length) {
-    el.devicesMeta.textContent = `${formatCount(state.devices.length)} 台设备 · ${formatCount(totalTabs)} 个标签页`;
+    el.devicesMeta.textContent = `${t('count.devices', { count: state.devices.length })} · ${t('count.tabs', { count: totalTabs })}`;
   } else {
-    el.devicesMeta.textContent = '0 台设备';
+    el.devicesMeta.textContent = t('count.devices', { count: 0 });
   }
 
   if (state.devicesLoading && !state.devices.length) {
-    el.devicesList.innerHTML = `<div class="empty"><span class="spinner" aria-hidden="true"></span><h2>正在读取同步的标签页</h2></div>`;
+    el.devicesList.innerHTML = `<div class="empty"><span class="spinner" aria-hidden="true"></span><h2>${t('devices.loadingTitle')}</h2></div>`;
     return;
   }
 
@@ -1516,9 +1553,9 @@ function renderDevices() {
     el.devicesList.innerHTML = emptyMarkup({
       iconName: 'alert',
       error: true,
-      title: '无法读取其他设备的标签页',
+      title: t('devices.readErrorTitle'),
       text: friendlyError(state.devicesError),
-      actions: '<button class="btn btn-primary" type="button" data-action="refresh-devices">重试</button>'
+      actions: `<button class="btn btn-primary" type="button" data-action="refresh-devices">${t('common.retry')}</button>`
     });
     return;
   }
@@ -1527,16 +1564,16 @@ function renderDevices() {
     el.devicesList.innerHTML = `
       <div class="sync-empty">
         <div class="empty-icon">${icon('devices')}</div>
-        <h2>还没有来自其他设备的标签页</h2>
-        <p>Chrome 没有返回已同步的会话。跨设备标签页需要登录同一个 Google 账号，并在同步设置中开启“打开的标签页”。</p>
+        <h2>${t('devices.emptyTitle')}</h2>
+        <p>${t('devices.emptyText')}</p>
         <div class="sync-steps">
-          <div class="sync-step"><span class="sync-step-num">1</span><span>在这台电脑的 Chrome 中登录你的 Google 账号。</span></div>
-          <div class="sync-step"><span class="sync-step-num">2</span><span>打开同步，并勾选“打开的标签页”这一项。</span></div>
-          <div class="sync-step"><span class="sync-step-num">3</span><span>在手机或其他电脑上保持 Chrome 打开，然后点击刷新。</span></div>
+          <div class="sync-step"><span class="sync-step-num">1</span><span>${t('devices.step1')}</span></div>
+          <div class="sync-step"><span class="sync-step-num">2</span><span>${t('devices.step2')}</span></div>
+          <div class="sync-step"><span class="sync-step-num">3</span><span>${t('devices.step3')}</span></div>
         </div>
         <div class="empty-actions">
-          <button class="btn btn-primary" type="button" data-action="open-sync-settings">打开 Chrome 同步设置</button>
-          <button class="btn btn-quiet" type="button" data-action="refresh-devices">刷新</button>
+          <button class="btn btn-primary" type="button" data-action="open-sync-settings">${t('devices.openSync')}</button>
+          <button class="btn btn-quiet" type="button" data-action="refresh-devices">${t('common.refresh')}</button>
         </div>
       </div>`;
     return;
@@ -1545,9 +1582,9 @@ function renderDevices() {
   if (!devices.length) {
     el.devicesList.innerHTML = emptyMarkup({
       iconName: 'search',
-      title: '没有匹配的标签页',
-      text: `没有与“${state.query}”匹配的其他设备标签页。`,
-      actions: '<button class="btn btn-primary" type="button" data-action="clear-search">清除搜索</button>'
+      title: t('devices.noMatchesTitle'),
+      text: t('devices.noMatchesText', { query: state.query }),
+      actions: `<button class="btn btn-primary" type="button" data-action="clear-search">${t('common.clearSearch')}</button>`
     });
     return;
   }
@@ -1556,7 +1593,7 @@ function renderDevices() {
 }
 
 function deviceMarkup(device) {
-  const name = String(device.deviceName || '未知设备');
+  const name = String(device.deviceName || t('devices.unknown'));
   const sessions = Array.isArray(device.sessions) ? device.sessions : [];
   const tabCount = countDeviceTabs([device]);
 
@@ -1566,7 +1603,7 @@ function deviceMarkup(device) {
         <span class="device-icon">${icon(deviceIcon(name))}</span>
         <div class="device-head-copy">
           <h3>${escapeHtml(name)}</h3>
-          <p>${formatCount(sessions.length)} 个窗口 · ${formatCount(tabCount)} 个标签页</p>
+          <p>${t('count.windows', { count: sessions.length })} · ${t('count.tabs', { count: tabCount })}</p>
         </div>
       </div>
       ${sessions.map((session) => deviceSessionMarkup(session)).join('')}
@@ -1583,7 +1620,7 @@ function deviceSessionMarkup(session) {
     <div class="device-session">
       <div class="device-session-head">
         ${icon('window')}
-        <span>窗口 · ${pluralTabs(tabs.length)}</span>
+        <span>${escapeHtml(t('devices.windowTitle', { tabs: pluralTabs(tabs.length) }))}</span>
         ${time ? `<span class="device-session-time">${escapeHtml(time)}</span>` : ''}
       </div>
       <div class="device-tabs">
@@ -1743,9 +1780,9 @@ function updateSearchUI() {
 
 function updateSearchPlaceholder() {
   const labels = {
-    history: '搜索历史记录（标题或网址）',
-    closed: '搜索最近关闭（标题或网址）',
-    devices: '搜索来自其他设备的标签页'
+    history: t('history.searchPlaceholder'),
+    closed: t('history.searchClosedPlaceholder'),
+    devices: t('history.searchDevicesPlaceholder')
   };
   const label = labels[state.view] || labels.history;
   el.searchInput.placeholder = label;
@@ -1860,21 +1897,21 @@ function applyCustomRange() {
   const start = el.startDate.value;
   const end = el.endDate.value;
   if (!start || !end) {
-    showToast('请选择开始和结束日期', 'error');
+    showToast(t('range.chooseBoth'), 'error');
     return;
   }
   const startDate = parseDateInput(start);
   const endDate = parseDateInput(end);
   if (!startDate || !endDate) {
-    showToast('日期格式无效', 'error');
+    showToast(t('range.invalidDate'), 'error');
     return;
   }
   if (startDate > endDate) {
-    showToast('开始日期不能晚于结束日期', 'error');
+    showToast(t('range.order'), 'error');
     return;
   }
   if (startOfDay(endDate.getTime()) > startOfDay(Date.now())) {
-    showToast('不能选择未来的日期', 'error');
+    showToast(t('range.future'), 'error');
     return;
   }
   state.custom = { start, end };
@@ -1888,40 +1925,40 @@ function openClearDialog() {
   closeRangePopover();
 
   const body = `
-    <p>选择要清除的时间范围。此操作只删除 Chrome 的浏览历史，不会删除 Cookie、缓存、下载记录或书签。</p>
-    <label class="field-label">时间范围
+    <p>${t('clear.intro')}</p>
+    <label class="field-label">${t('clear.rangeLabel')}
       <select id="clearRange" autofocus>
-        <option value="hour" selected>最近 1 小时</option>
-        <option value="today">今天</option>
-        <option value="7d">最近 7 天</option>
-        <option value="30d">最近 30 天</option>
-        <option value="all">全部时间</option>
-        <option value="custom">自定义范围…</option>
+        <option value="hour" selected>${t('clear.hour')}</option>
+        <option value="today">${t('clear.today')}</option>
+        <option value="7d">${t('clear.7d')}</option>
+        <option value="30d">${t('clear.30d')}</option>
+        <option value="all">${t('clear.all')}</option>
+        <option value="custom">${t('clear.custom')}</option>
       </select>
     </label>
     <div class="custom-clear-range" id="clearCustom" hidden>
-      <label class="field-label">开始日期<input type="date" id="clearStart"></label>
-      <label class="field-label">结束日期<input type="date" id="clearEnd"></label>
+      <label class="field-label">${t('clear.startDate')}<input type="date" id="clearStart"></label>
+      <label class="field-label">${t('clear.endDate')}<input type="date" id="clearEnd"></label>
     </div>
     <div class="clear-native">
-      <span>Cookie、缓存、下载记录等需要在 Chrome 的“清除浏览数据”中处理。</span>
-      <button class="btn btn-quiet" type="button" id="openClearSettings">打开 Chrome 清除浏览数据</button>
+      <span>${t('clear.nativeNote')}</span>
+      <button class="btn btn-quiet" type="button" id="openClearSettings">${t('clear.openChrome')}</button>
     </div>
     <div class="modal-callout is-warning">
       ${icon('alert')}
-      <span>历史记录清除后无法撤销。同步到其他设备的历史记录是否受影响，取决于 Chrome 的同步状态。</span>
+      <span>${t('clear.warning')}</span>
     </div>
     <label class="check-line">
       <input type="checkbox" id="clearAck">
-      <span>我了解此操作无法撤销</span>
+      <span>${t('clear.ack')}</span>
     </label>`;
 
   openModal({
-    title: '清除历史记录',
+    title: t('clear.title'),
     bodyHtml: body,
     footerHtml: `
-      <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
-      <button class="btn btn-danger" type="button" id="clearConfirm" disabled>清除历史记录</button>`,
+      <button class="btn btn-ghost" type="button" data-modal-close>${t('clear.cancel')}</button>
+      <button class="btn btn-danger" type="button" id="clearConfirm" disabled>${t('clear.confirm')}</button>`,
     onMount(modal) {
       const rangeSelect = modal.querySelector('#clearRange');
       const custom = modal.querySelector('#clearCustom');
@@ -1937,7 +1974,7 @@ function openClearDialog() {
           console.error('Failed to open Chrome clear browsing data', error);
           const copied = await copyText('chrome://settings/clearBrowserData');
           showToast(
-            copied ? '已复制地址，请在地址栏打开' : '请在地址栏打开 chrome://settings/clearBrowserData',
+            copied ? t('clear.copied') : t('clear.copyFallback'),
             copied ? 'info' : 'error'
           );
         }
@@ -1961,21 +1998,21 @@ function openClearDialog() {
 
         if (range === 'custom') {
           if (!start.value || !end.value) {
-            showToast('请选择开始和结束日期', 'error');
+            showToast(t('range.chooseBoth'), 'error');
             return;
           }
           const startDate = parseDateInput(start.value);
           const endDate = parseDateInput(end.value);
           if (!startDate || !endDate) {
-            showToast('日期格式无效', 'error');
+            showToast(t('range.invalidDate'), 'error');
             return;
           }
           if (startDate > endDate) {
-            showToast('开始日期不能晚于结束日期', 'error');
+            showToast(t('range.order'), 'error');
             return;
           }
           if (startOfDay(endDate.getTime()) > startOfDay(Date.now())) {
-            showToast('不能选择未来的日期', 'error');
+            showToast(t('range.future'), 'error');
             return;
           }
           bounds = {
@@ -1983,7 +2020,7 @@ function openClearDialog() {
             endTime: Math.min(Date.now(), startOfNextDay(endDate.getTime()))
           };
           if (bounds.startTime >= bounds.endTime) {
-            showToast('此范围内没有可清除的历史记录', 'info');
+            showToast(t('clear.empty'), 'info');
             return;
           }
         } else if (range !== 'all') {
@@ -1991,7 +2028,7 @@ function openClearDialog() {
         }
 
         confirm.disabled = true;
-        confirm.textContent = '正在清除…';
+        confirm.textContent = t('clear.clearing');
 
         try {
           if (range === 'all') await api.history.deleteAll();
@@ -2000,12 +2037,12 @@ function openClearDialog() {
           resetHistoryData();
           state.loadedOnce = false;
           if (state.view === 'history') await loadHistoryReset();
-          showToast('已清除历史记录', 'success');
+          showToast(t('clear.success'), 'success');
         } catch (error) {
           console.error('Failed to clear history', error);
-          showToast(`清除失败：${friendlyError(error)}`, 'error');
+          showToast(t('clear.failed', { error: friendlyError(error) }), 'error');
           confirm.disabled = false;
-          confirm.textContent = '清除历史记录';
+          confirm.textContent = t('clear.confirm');
         }
       });
     }
@@ -2026,32 +2063,32 @@ function openExportDialog() {
   closeRangePopover();
 
   const body = `
-    <p>把浏览历史导出到本地文件。文件只包含标题、网址、访问次数和最后访问时间，不包含 Cookie、缓存、密码或下载记录。</p>
+    <p>${t('export.intro')}</p>
     <div class="export-options">
-      <label class="field-label"><span>导出范围</span>
+      <label class="field-label"><span>${t('export.scope')}</span>
         <select id="exportScope">
-          <option value="all" selected>全部历史</option>
-          <option value="current">当前搜索 / 时间筛选</option>
+          <option value="all" selected>${t('export.scopeAll')}</option>
+          <option value="current">${t('export.scopeCurrent')}</option>
         </select>
       </label>
-      <label class="field-label"><span>文件格式</span>
+      <label class="field-label"><span>${t('export.format')}</span>
         <select id="exportFormat">
-          <option value="csv" selected>CSV（Excel 可打开）</option>
-          <option value="json">JSON</option>
+          <option value="csv" selected>${t('export.csv')}</option>
+          <option value="json">${t('export.json')}</option>
         </select>
       </label>
     </div>
     <div class="modal-callout is-warning">
       ${icon('alert')}
-      <span>导出的文件可能包含敏感浏览记录，请自行妥善保管。</span>
+      <span>${t('export.note')}</span>
     </div>`;
 
   openModal({
-    title: '导出浏览数据',
+    title: t('export.title'),
     bodyHtml: body,
     footerHtml: `
-      <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
-      <button class="btn btn-primary" type="button" id="exportConfirm">导出</button>`,
+      <button class="btn btn-ghost" type="button" data-modal-close>${t('export.cancel')}</button>
+      <button class="btn btn-primary" type="button" id="exportConfirm">${t('export.confirm')}</button>`,
     onMount(modal) {
       const scopeSelect = modal.querySelector('#exportScope');
       const formatSelect = modal.querySelector('#exportFormat');
@@ -2061,26 +2098,26 @@ function openExportDialog() {
         const scope = scopeSelect.value;
         const format = formatSelect.value;
         confirm.disabled = true;
-        confirm.textContent = '正在导出…';
+        confirm.textContent = t('export.exporting');
 
         try {
           const items = await collectExportItems(scope, (count) => {
-            confirm.textContent = `正在导出… ${formatCount(count)} 条`;
+            confirm.textContent = t('export.exportingCount', { count });
           });
           if (!items.length) {
-            showToast('没有可导出的历史记录', 'error');
+            showToast(t('export.empty'), 'error');
             confirm.disabled = false;
-            confirm.textContent = '导出';
+            confirm.textContent = t('export.confirm');
             return;
           }
           downloadExport(items, format, scope);
           closeModal();
-          showToast(`已导出 ${formatCount(items.length)} 条历史记录`, 'success');
+          showToast(t('export.success', { count: items.length }), 'success');
         } catch (error) {
           console.error('Failed to export history', error);
-          showToast(`导出失败：${friendlyError(error)}`, 'error');
+          showToast(t('export.failed', { error: friendlyError(error) }), 'error');
           confirm.disabled = false;
-          confirm.textContent = '导出';
+          confirm.textContent = t('export.confirm');
         }
       });
     }
@@ -2137,7 +2174,7 @@ async function collectExportItems(scope = 'all', onProgress) {
 
 function downloadExport(items, format, scope) {
   const date = formatDateInput(Date.now());
-  const scopeLabel = scope === 'current' ? '当前筛选' : '全部历史';
+  const scopeLabel = t(scope === 'current' ? 'export.scopeLabelCurrent' : 'export.scopeLabelAll');
   const filename = `edge-history-${date}.${format}`;
 
   let content;
@@ -2158,7 +2195,12 @@ function downloadExport(items, format, scope) {
     mime = 'application/json;charset=utf-8';
   } else {
     const rows = [
-      ['标题', '网址', '访问次数', '最后访问时间'].map(csvCell).join(','),
+      [
+        t('export.headerTitle'),
+        t('export.headerUrl'),
+        t('export.headerVisitCount'),
+        t('export.headerLastVisit')
+      ].map(csvCell).join(','),
       ...items.map((item) => [
         item.title,
         item.url,
@@ -2191,6 +2233,16 @@ function csvCell(value) {
 
 /* ---------------------------------------------------------------- settings */
 
+function persistSettings(patch) {
+  saveSettings(patch).then((result) => {
+    if (!result.ok) {
+      showToast(t('settings.saveFailed'), 'error');
+    } else if (!result.synced) {
+      showToast(t('settings.syncUnavailable'), 'info');
+    }
+  });
+}
+
 function openSettings() {
   closeRowMenu();
   closeRangePopover();
@@ -2206,77 +2258,90 @@ function openSettings() {
   const mac = isMacPlatform();
   const shortcut = mac ? '⌥ + ⇧ + H' : 'Alt + H';
   const version = escapeHtml(getVersion());
+  const language = state.settings.language;
+  const languageOption = (value, label) => `
+    <option value="${value}"${language === value ? ' selected' : ''}>${label}</option>`;
 
   const body = `
     <section class="settings-section">
-      <h3>外观</h3>
+      <h3>${t('settings.appearance')}</h3>
       <div class="setting-row">
-        <div class="setting-copy"><strong>主题</strong><p>跟随系统，或固定为浅色 / 深色。</p></div>
+        <div class="setting-copy"><strong>${t('settings.theme')}</strong><p>${t('settings.themeHint')}</p></div>
         <div class="segmented" id="themeSegmented">
-          ${themeButton('system', '跟随', 'monitor')}
-          ${themeButton('light', '浅色', 'sun')}
-          ${themeButton('dark', '深色', 'moon')}
+          ${themeButton('system', t('settings.themeSystem'), 'monitor')}
+          ${themeButton('light', t('settings.themeLight'), 'sun')}
+          ${themeButton('dark', t('settings.themeDark'), 'moon')}
         </div>
       </div>
       <div class="setting-row">
-        <div class="setting-copy"><strong>显示访问次数</strong><p>在记录右侧显示该网址的累计访问次数。</p></div>
-        ${switchButton('showVisitCounts', '显示访问次数', state.settings.showVisitCounts)}
+        <div class="setting-copy"><strong>${t('settings.language')}</strong><p>${t('settings.languageHint')}</p></div>
+        <select class="settings-select" id="languageSelect" aria-label="${escapeHtml(t('settings.language'))}">
+          ${languageOption('system', t('settings.languageSystem'))}
+          ${languageOption('zh-CN', t('settings.languageZh'))}
+          ${languageOption('en', t('settings.languageEn'))}
+        </select>
       </div>
       <div class="setting-row">
-        <div class="setting-copy"><strong>合并重复页面</strong><p>同一站点下标题相同、路径主体相同的记录合并为一条；忽略查询参数、#片段和末尾楼层数字。</p></div>
-        ${switchButton('mergeDuplicates', '合并重复页面', state.settings.mergeDuplicates)}
+        <div class="setting-copy"><strong>${t('settings.showVisitCounts')}</strong><p>${t('settings.showVisitCountsHint')}</p></div>
+        ${switchButton('showVisitCounts', t('settings.showVisitCounts'), state.settings.showVisitCounts)}
       </div>
       <div class="setting-row">
-        <div class="setting-copy"><strong>在新标签页中打开</strong><p>点击历史记录时保留当前页面。也可以按住 Ctrl / ⌘ 临时在新标签页打开。</p></div>
-        ${switchButton('openInNewTab', '在新标签页中打开', state.settings.openInNewTab)}
+        <div class="setting-copy"><strong>${t('settings.mergeDuplicates')}</strong><p>${t('settings.mergeDuplicatesHint')}</p></div>
+        ${switchButton('mergeDuplicates', t('settings.mergeDuplicates'), state.settings.mergeDuplicates)}
+      </div>
+      <div class="setting-row">
+        <div class="setting-copy"><strong>${t('settings.openInNewTab')}</strong><p>${t('settings.openInNewTabHint')}</p></div>
+        ${switchButton('openInNewTab', t('settings.openInNewTab'), state.settings.openInNewTab)}
       </div>
     </section>
 
     <section class="settings-section">
-      <h3>数据</h3>
+      <h3>${t('settings.data')}</h3>
       <div class="setting-row">
-        <div class="setting-copy"><strong>清除浏览历史</strong><p>只清除历史记录，不影响 Cookie、缓存、下载或书签。</p></div>
-        <button class="btn btn-ghost" type="button" id="settingsClear">清除…</button>
+        <div class="setting-copy"><strong>${t('settings.clear')}</strong><p>${t('settings.clearHint')}</p></div>
+        <button class="btn btn-ghost" type="button" id="settingsClear">${t('settings.clearButton')}</button>
       </div>
-      <div class="settings-note">
-        此扩展不会上传任何数据，没有网络请求或分析统计。历史记录、最近关闭和同步标签页都直接读取 Chrome 的本地 API。
-      </div>
+      <div class="settings-note">${t('settings.syncHint')}</div>
+      <div class="settings-note">${t('settings.privacyNote')}</div>
     </section>
 
     <section class="settings-section">
-      <h3>快捷键</h3>
+      <h3>${t('settings.shortcuts')}</h3>
       <div class="setting-row">
-        <div class="setting-copy"><strong>打开完整历史记录</strong><p>当前快捷键：<code>${shortcut}</code>。Chrome 不允许扩展占用 Ctrl+H，可以在扩展快捷键页面修改。</p></div>
-        <button class="btn btn-ghost" type="button" id="copyShortcutPath">复制设置地址</button>
+        <div class="setting-copy"><strong>${t('settings.shortcutOpen')}</strong><p>${t('settings.shortcutHint', { shortcut: `<code>${shortcut}</code>` })}</p></div>
+        <button class="btn btn-ghost" type="button" id="copyShortcutPath">${t('settings.copyShortcutPath')}</button>
       </div>
-      <div class="settings-note">
-        打开 <code>chrome://extensions/shortcuts</code>，找到“Edge 风格历史记录”即可自定义快捷键。
-      </div>
+      <div class="settings-note">${t('settings.shortcutNote', { path: '<code>chrome://extensions/shortcuts</code>' })}</div>
     </section>
 
     <section class="settings-section">
-      <h3>关于</h3>
+      <h3>${t('settings.about')}</h3>
       <div class="setting-row">
         <div class="setting-copy">
-          <strong>Edge 风格历史记录</strong>
-          <p>为 Chrome 带来按日期分组、搜索筛选和最近关闭等更顺手的浏览体验。</p>
-          <div class="about-meta"><span>版本 ${version}</span><span>本地运行 · 无追踪</span></div>
+          <strong>${t('settings.aboutName')}</strong>
+          <p>${t('settings.aboutBody')}</p>
+          <div class="about-meta"><span>${t('settings.version', { version })}</span><span>${t('settings.localNoTracking')}</span></div>
         </div>
       </div>
-      <div class="settings-note">
-        受 Chrome 扩展权限限制，本扩展无法替换 <code>chrome://history</code> 或 Ctrl+H，也无法读取 Edge 的历史记录。跨设备标签页依赖 Chrome 同步。
-      </div>
+      <div class="settings-note">${t('settings.aboutNote', { history: '<code>chrome://history</code>' })}</div>
     </section>`;
 
   openModal({
-    title: '设置',
+    title: t('settings.title'),
     bodyHtml: body,
     wide: true,
-    footerHtml: '<button class="btn btn-primary" type="button" data-modal-close>完成</button>',
+    footerHtml: `<button class="btn btn-primary" type="button" data-modal-close>${t('settings.done')}</button>`,
     onMount(modal) {
       for (const button of modal.querySelectorAll('[data-theme-value]')) {
         button.addEventListener('click', () => setTheme(button.dataset.themeValue));
       }
+
+      modal.querySelector('#languageSelect')?.addEventListener('change', (event) => {
+        const nextLanguage = event.target.value;
+        state.settings.language = nextLanguage;
+        applyLanguagePreference(nextLanguage);
+        persistSettings({ language: nextLanguage });
+      });
 
       for (const button of modal.querySelectorAll('[data-setting]')) {
         button.addEventListener('click', () => {
@@ -2284,7 +2349,7 @@ function openSettings() {
           const value = button.getAttribute('aria-checked') !== 'true';
           button.setAttribute('aria-checked', String(value));
           state.settings[key] = value;
-          saveSettings({ [key]: value });
+          persistSettings({ [key]: value });
           if (key === 'showVisitCounts') {
             renderHistory();
           }
@@ -2303,7 +2368,7 @@ function openSettings() {
       modal.querySelector('#copyShortcutPath')?.addEventListener('click', async () => {
         const copied = await copyText('chrome://extensions/shortcuts');
         showToast(
-          copied ? '已复制快捷键设置地址' : '复制失败，请手动输入 chrome://extensions/shortcuts',
+          copied ? t('settings.copyShortcutSuccess') : t('settings.copyShortcutFallback'),
           copied ? 'success' : 'error'
         );
       });
@@ -2324,7 +2389,7 @@ function openModal({ title, bodyHtml, footerHtml = '', wide = false, onMount, on
     <div class="modal${wide ? ' is-wide' : ''}" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
       <div class="modal-head">
         <h2 id="modalTitle">${escapeHtml(title)}</h2>
-        <button class="icon-btn" type="button" data-modal-close aria-label="关闭">${icon('close')}</button>
+        <button class="icon-btn" type="button" data-modal-close aria-label="${escapeHtml(t('common.close'))}">${icon('close')}</button>
       </div>
       <div class="modal-body">${bodyHtml}</div>
       ${footerHtml ? `<div class="modal-footer">${footerHtml}</div>` : ''}
@@ -2367,7 +2432,7 @@ function closeModal() {
   if (!state.modalOpen && previous?.isConnected) previous.focus();
 }
 
-function showConfirm({ title, message, note = '', confirmLabel = '删除', cancelLabel = '取消' }) {
+function showConfirm({ title, message, note = '', confirmLabel = t('common.delete'), cancelLabel = t('common.cancel') }) {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (value) => {
@@ -2724,7 +2789,7 @@ async function onDevicesClick(event) {
       console.error('Failed to open Chrome sync settings', error);
       const copied = await copyText('chrome://settings/syncSetup');
       showToast(
-        copied ? '已复制同步设置地址，请在地址栏打开' : '请在地址栏打开 chrome://settings/syncSetup',
+        copied ? t('devices.syncCopied') : t('devices.syncFallback'),
         copied ? 'info' : 'error'
       );
     }
@@ -2849,7 +2914,7 @@ function trapModalFocus(event) {
 async function openHistoryItem(item, { forceNewTab = false } = {}) {
   if (!item) return;
   if (!canOpenUrl(item.url)) {
-    showToast('Chrome 不允许扩展直接打开此类型的页面，可以复制链接后在地址栏打开', 'error');
+    showToast(t('error.openType'), 'error');
     return;
   }
 
@@ -2867,7 +2932,7 @@ async function openHistoryItem(item, { forceNewTab = false } = {}) {
 
 async function openNewTab(url) {
   if (!canOpenUrl(url)) {
-    showToast('Chrome 不允许扩展直接打开此类型的页面', 'error');
+    showToast(t('error.openTypeShort'), 'error');
     return;
   }
 
@@ -2875,7 +2940,7 @@ async function openNewTab(url) {
     await api.tabs.create({ url });
   } catch (error) {
     console.error('Failed to open URL', error);
-    showToast(`无法打开页面：${friendlyError(error)}`, 'error');
+    showToast(t('error.openPage') + ': ' + friendlyError(error), 'error');
   }
 }
 
@@ -2895,14 +2960,14 @@ function updateRefreshButton() {
   if (!el) return;
   const loading = state.view === 'closed' ? state.closedLoading : state.devicesLoading;
   const label = el.refreshBtn.querySelector('span');
-  if (label) label.textContent = loading ? '刷新中…' : '刷新';
+  if (label) label.textContent = loading ? t('common.refreshing') : t('common.refresh');
   el.refreshBtn.disabled = loading;
 }
 
 function friendlyError(error) {
-  const message = String(error?.message || error || '未知错误');
-  if (/cannot be found|no tab with id/i.test(message)) return '页面可能已经被关闭';
-  if (/not available|not enabled|sync/i.test(message)) return 'Chrome 同步或会话功能当前不可用';
+  const message = String(error?.message || error || t('error.unknown'));
+  if (/cannot be found|no tab with id/i.test(message)) return t('error.tabClosed');
+  if (/not available|not enabled|sync/i.test(message)) return t('error.syncUnavailable');
   return message.length > 150 ? `${message.slice(0, 150)}…` : message;
 }
 
@@ -2915,7 +2980,7 @@ function updateSidebarShortcut() {
       el.welcomeShortcut.innerHTML = '<kbd>⌥</kbd> + <kbd>⇧</kbd> + <kbd>H</kbd>';
     }
   }
-  el.shortcutCard.title = 'Option + Shift + H，可在 chrome://extensions/shortcuts 中修改';
+  el.shortcutCard.title = t('sidebar.shortcutTitleMac');
 }
 
 function isMacPlatform() {

@@ -1,0 +1,32 @@
+{
+  "extName": {
+    "message": "Edge 风格历史记录"
+  },
+  "extShortName": {
+    "message": "Edge History"
+  },
+  "extDescription": {
+    "message": "把 Edge 的历史记录体验带到 Chrome：按日期分组、快速搜索、时间筛选、最近关闭、跨设备标签页与批量管理。"
+  },
+  "actionTitle": {
+    "message": "历史记录"
+  },
+  "commandOpenHistory": {
+    "message": "打开完整历史记录"
+  },
+  "contextMenuSearch": {
+    "message": "在历史记录中搜索“%s”"
+  },
+  "omniboxDefault": {
+    "message": "搜索历史记录"
+  },
+  "omniboxSearch": {
+    "message": "在历史记录中搜索“$1”",
+    "placeholders": {
+      "text": {
+        "content": "$1",
+        "example": "chrome"
+      }
+    }
+  }
+}

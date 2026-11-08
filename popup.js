@@ -1,5 +1,6 @@
 import './shared/demo.js';
 import { mountIcons, icon } from './shared/icons.js';
+import { applyI18n, setLanguage, t } from './shared/i18n.js';
 import {
   canOpenUrl,
   historyItemKey,
@@ -66,7 +67,7 @@ const runSearch = debounce(() => applySearch(), 200);
 init().catch((error) => {
   console.error('Popup failed to initialise', error);
   if (el?.historyList) {
-    el.historyList.innerHTML = '<div class="p-empty p-error">快捷面板加载失败，请打开完整历史记录。</div>';
+    el.historyList.innerHTML = `<div class="p-empty p-error">${t('popup.initError')}</div>`;
   }
 });
 
@@ -77,6 +78,8 @@ async function init() {
   const loadedSettings = await loadSettings();
   state.settings = loadedSettings.settings;
   state.settingsArea = loadedSettings.area;
+  setLanguage(state.settings.language);
+  applyI18n(document);
   applyTheme();
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
     if (state.settings.theme === 'system') applyTheme();
@@ -150,18 +153,31 @@ function cacheDom() {
 let settingsWatchTimer = 0;
 
 function bindSettingsWatch() {
-  watchSettings((next) => {
+  watchSettings((next, meta) => {
     window.clearTimeout(settingsWatchTimer);
-    settingsWatchTimer = window.setTimeout(() => applySettingsUpdate(next), 60);
+    settingsWatchTimer = window.setTimeout(() => applySettingsUpdate(next, meta), 60);
   });
 }
 
-function applySettingsUpdate(next) {
+function applyLanguagePreference(preference) {
+  setLanguage(preference);
+  applyI18n(document);
+  updateShortcutHint();
+  applyViewUi();
+  updateRangeUi();
+  updateCounts();
+  if (state.items.length) renderHistory();
+  if (state.closedLoaded) renderClosed();
+}
+
+function applySettingsUpdate(next, meta) {
   if (!next) return;
   const previous = state.settings;
   if (JSON.stringify(previous) === JSON.stringify(next)) return;
 
   state.settings = next;
+  if (meta?.area) state.settingsArea = meta.area;
+  if (previous.language !== next.language) applyLanguagePreference(next.language);
   if (previous.theme !== next.theme) applyTheme();
   if (previous.showVisitCounts !== next.showVisitCounts) renderHistory();
   if (previous.mergeDuplicates !== next.mergeDuplicates && state.view === 'history') {
@@ -197,7 +213,7 @@ function applyViewUi() {
   el.historyView.hidden = !history;
   el.closedView.hidden = history;
 
-  const placeholder = history ? '搜索历史记录' : '搜索最近关闭';
+  const placeholder = history ? t('popup.searchHistory') : t('popup.searchClosed');
   el.searchInput.placeholder = placeholder;
   el.searchInput.setAttribute('aria-label', placeholder);
 
@@ -369,10 +385,10 @@ function renderHistory() {
   if (state.error && !state.items.length) {
     el.historyList.innerHTML = emptyMarkup({
       iconName: 'alert',
-      title: '无法读取历史记录',
+      title: t('popup.readErrorTitle'),
       text: friendlyError(state.error),
       error: true,
-      actions: '<button class="p-empty-action" type="button" data-action="retry-history">重试</button>'
+      actions: `<button class="p-empty-action" type="button" data-action="retry-history">${t('common.retry')}</button>`
     });
   } else if (state.loading && !state.items.length) {
     el.historyList.innerHTML = skeletonMarkup(6);
@@ -441,25 +457,25 @@ function emptyHistoryMarkup() {
   if (state.query) {
     return emptyMarkup({
       iconName: 'search',
-      title: '未找到相关历史记录',
-      text: '没有与当前关键词匹配的标题或网址。',
-      actions: '<button class="p-empty-action" type="button" data-action="clear-search">清除搜索</button>'
+      title: t('popup.noResultsTitle'),
+      text: t('popup.noResultsText'),
+      actions: `<button class="p-empty-action" type="button" data-action="clear-search">${t('common.clearSearch')}</button>`
     });
   }
 
   if (state.range !== 'all') {
     return emptyMarkup({
       iconName: 'calendar',
-      title: '此时间范围内没有记录',
-      text: `当前筛选：${formatRangeLabel(state.range)}`,
-      actions: '<button class="p-empty-action" type="button" data-action="show-all">显示全部时间</button>'
+      title: t('popup.emptyRangeTitle'),
+      text: t('popup.emptyRangeText', { range: formatRangeLabel(state.range) }),
+      actions: `<button class="p-empty-action" type="button" data-action="show-all">${t('common.showAllTime')}</button>`
     });
   }
 
   return emptyMarkup({
     iconName: 'history',
-    title: '还没有浏览记录',
-    text: '打开一些网页后，历史记录会按日期出现在这里。'
+    title: t('popup.emptyTitle'),
+    text: t('popup.emptyText')
   });
 }
 
@@ -492,17 +508,17 @@ function renderListFooter() {
   if (!state.items.length) {
     html = '';
   } else if (state.loading) {
-    html = '<span class="p-spinner" aria-hidden="true"></span><span>正在加载更多…</span>';
+    html = `<span class="p-spinner" aria-hidden="true"></span><span>${t('common.loadingMore')}</span>`;
   } else if (state.error) {
     html = `
-      <span>加载失败</span>
-      <button class="p-load-more" type="button" data-action="retry-history">重试</button>`;
+      <span>${t('count.failed')}</span>
+      <button class="p-load-more" type="button" data-action="retry-history">${t('common.retry')}</button>`;
   } else if (state.exhausted) {
-    html = `<span class="p-end-mark" aria-hidden="true"></span><span>已显示全部 ${formatCount(state.items.length)} 条</span>`;
+    html = `<span class="p-end-mark" aria-hidden="true"></span><span>${escapeHtml(t('count.allLoaded', { count: state.items.length }))}</span>`;
   } else {
     html = `
-      <span>继续滚动加载更多</span>
-      <button class="p-load-more" type="button" data-action="load-more">加载更多</button>`;
+      <span>${t('history.scrollMore')}</span>
+      <button class="p-load-more" type="button" data-action="load-more">${t('common.loadMore')}</button>`;
   }
 
   el.listFooter.innerHTML = html;
@@ -514,25 +530,25 @@ function updateCounts() {
 
   if (state.view === 'closed') {
     const sessions = filteredSessions();
-    if (state.closedLoading && !state.closed.length) el.closedCount.textContent = '正在读取…';
-    else if (state.closedError) el.closedCount.textContent = '读取失败';
-    else if (state.query) el.closedCount.textContent = `${formatCount(sessions.length)} 个匹配项`;
-    else el.closedCount.textContent = `${formatCount(state.closed.length)} 个关闭项`;
+    if (state.closedLoading && !state.closed.length) el.closedCount.textContent = t('closed.metaLoading');
+    else if (state.closedError) el.closedCount.textContent = t('closed.metaFailed');
+    else if (state.query) el.closedCount.textContent = t('count.matches', { count: sessions.length });
+    else el.closedCount.textContent = t('count.closed', { count: state.closed.length });
     return;
   }
 
   if (state.loading && !state.items.length) {
-    el.historyCount.textContent = '正在加载…';
+    el.historyCount.textContent = t('count.loading');
   } else if (state.error && !state.items.length) {
-    el.historyCount.textContent = '加载失败';
+    el.historyCount.textContent = t('count.failed');
   } else if (!state.items.length) {
-    el.historyCount.textContent = '0 条';
+    el.historyCount.textContent = t('count.zero');
   } else if (state.query) {
-    el.historyCount.textContent = `${formatCount(state.items.length)} 条搜索结果`;
+    el.historyCount.textContent = t('count.search', { count: state.items.length });
   } else if (state.exhausted) {
-    el.historyCount.textContent = `共 ${formatCount(state.items.length)} 条`;
+    el.historyCount.textContent = t('count.total', { count: state.items.length });
   } else {
-    el.historyCount.textContent = `已加载 ${formatCount(state.items.length)} 条`;
+    el.historyCount.textContent = t('count.loaded', { count: state.items.length });
   }
 }
 
@@ -624,10 +640,10 @@ function renderClosed() {
   if (state.closedError) {
     el.closedList.innerHTML = emptyMarkup({
       iconName: 'alert',
-      title: '无法读取最近关闭',
+      title: t('popup.closedErrorTitle'),
       text: friendlyError(state.closedError),
       error: true,
-      actions: '<button class="p-empty-action" type="button" data-action="retry-closed">重试</button>'
+      actions: `<button class="p-empty-action" type="button" data-action="retry-closed">${t('common.retry')}</button>`
     });
     updateCounts();
     return;
@@ -636,8 +652,8 @@ function renderClosed() {
   if (!state.closed.length) {
     el.closedList.innerHTML = emptyMarkup({
       iconName: 'restore',
-      title: '没有最近关闭的标签页',
-      text: '关闭标签页或窗口后，可以在这里一键恢复。'
+      title: t('popup.closedEmptyTitle'),
+      text: t('popup.closedEmptyText')
     });
     updateCounts();
     return;
@@ -646,9 +662,9 @@ function renderClosed() {
   if (!sessions.length) {
     el.closedList.innerHTML = emptyMarkup({
       iconName: 'search',
-      title: '没有匹配的关闭项',
-      text: `没有与“${state.query}”匹配的已关闭标签页。`,
-      actions: '<button class="p-empty-action" type="button" data-action="clear-search">清除搜索</button>'
+      title: t('popup.closedNoMatchesTitle'),
+      text: t('popup.closedNoMatchesText', { query: state.query }),
+      actions: `<button class="p-empty-action" type="button" data-action="clear-search">${t('common.clearSearch')}</button>`
     });
     updateCounts();
     return;
@@ -663,17 +679,17 @@ function closedRowMarkup(session, index) {
 
   if (session.tab) {
     const tab = session.tab;
-    const title = normalizeTitle(tab.title, tab.url) || '未命名标签页';
+    const title = normalizeTitle(tab.title, tab.url) || t('common.untitledTab');
     const { host } = urlParts(tab.url);
     return `
       <div class="p-closed-row" data-session-index="${index}">
         ${faviconMarkup(tab.url, title)}
         <span class="p-closed-main">
           <span class="p-closed-title">${highlight(title, state.query)}</span>
-          <span class="p-closed-sub">${highlight(host || '标签页', state.query)}</span>
+          <span class="p-closed-sub">${highlight(host || t('popup.closedTabFallback'), state.query)}</span>
         </span>
         <span class="p-closed-time">${escapeHtml(time)}</span>
-        <button class="p-restore" type="button" data-session-index="${index}" aria-label="恢复 ${escapeHtml(title)}" title="恢复标签页">
+        <button class="p-restore" type="button" data-session-index="${index}" aria-label="${escapeHtml(t('popup.closedRestoreAria', { title }))}" title="${escapeHtml(t('popup.closedRestoreTitle'))}">
           ${icon('restore')}
         </button>
       </div>`;
@@ -688,16 +704,16 @@ function closedRowMarkup(session, index) {
     : tabs[0]?.title
       ? normalizeTitle(tabs[0].title, tabs[0].url)
       : '';
-  const sub = firstTitle || '包含多个标签页';
+  const sub = firstTitle || t('popup.closedMultipleTabs');
   return `
     <div class="p-closed-row" data-session-index="${index}">
       <span class="p-window-icon">${icon('window')}</span>
       <span class="p-closed-main">
-        <span class="p-closed-title">窗口 · ${formatCount(tabs.length)} 个标签页</span>
+        <span class="p-closed-title">${escapeHtml(t('popup.closedWindow', { tabs: t('count.tabs', { count: tabs.length }) }))}</span>
         <span class="p-closed-sub">${highlight(sub, state.query)}</span>
       </span>
       <span class="p-closed-time">${escapeHtml(time)}</span>
-      <button class="p-restore" type="button" data-session-index="${index}" aria-label="恢复窗口，共 ${formatCount(tabs.length)} 个标签页" title="恢复窗口">
+      <button class="p-restore" type="button" data-session-index="${index}" aria-label="${escapeHtml(t('popup.closedRestoreWindowAria', { count: tabs.length }))}" title="${escapeHtml(t('popup.closedRestoreWindow'))}">
         ${icon('restore')}
       </button>
     </div>`;
@@ -728,11 +744,11 @@ async function restoreSession(index) {
     renderClosed();
     updateCounts();
 
-    showToast(session.window ? '已恢复窗口' : '已恢复标签页', 'success');
+    showToast(session.window ? t('popup.closedRestoredWindow') : t('popup.closedRestoredTab'), 'success');
     await loadClosed(true);
   } catch (error) {
     console.error('Failed to restore session from popup', error);
-    showToast('恢复失败，请重试', 'error');
+    showToast(t('popup.closedRestoreFailed'), 'error');
     if (button) button.disabled = false;
   } finally {
     state.restoring = false;
@@ -881,7 +897,7 @@ async function onClosedClick(event) {
 
 async function openUrlAndClose(url) {
   if (!canOpenUrl(url)) {
-    showToast('Chrome 不允许扩展直接打开此类型的页面', 'error');
+    showToast(t('error.openTypeShort'), 'error');
     return;
   }
 
@@ -890,7 +906,7 @@ async function openUrlAndClose(url) {
     window.close();
   } catch (error) {
     console.error('Failed to open history item from popup', error);
-    showToast('无法打开该页面', 'error');
+    showToast(t('error.openPage'), 'error');
   }
 }
 
@@ -945,7 +961,7 @@ async function createHistoryTab(suffix = '') {
     window.close();
   } catch (error) {
     console.error('Failed to open full history page', error);
-    showToast('无法打开完整历史记录', 'error');
+    showToast(t('error.openFull'), 'error');
   }
 }
 
@@ -1086,14 +1102,14 @@ function updateShortcutHint() {
     || /Macintosh/i.test(navigator.userAgent);
   const shortcut = mac ? 'Option + Shift + H' : 'Alt + H';
   if (el.openFull) {
-    el.openFull.title = `打开完整历史记录（${shortcut}）`;
+    el.openFull.title = t('popup.openFullTitle', { shortcut });
     el.openFull.setAttribute('aria-label', el.openFull.title);
   }
 }
 
 function friendlyError(error) {
-  const message = String(error?.message || error || '未知错误');
-  if (/cannot be found|no tab with id/i.test(message)) return '页面可能已经被关闭';
-  if (/not available|not enabled|sync/i.test(message)) return 'Chrome 同步或会话功能当前不可用';
+  const message = String(error?.message || error || t('error.unknown'));
+  if (/cannot be found|no tab with id/i.test(message)) return t('error.tabClosed');
+  if (/not available|not enabled|sync/i.test(message)) return t('error.syncUnavailable');
   return message.length > 100 ? `${message.slice(0, 100)}…` : message;
 }

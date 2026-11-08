@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "Edge 风格历史记录",
-  "short_name": "Edge History",
+  "default_locale": "en",
+  "name": "__MSG_extName__",
+  "short_name": "__MSG_extShortName__",
   "version": "1.2.0",
-  "description": "把 Edge 的历史记录体验带到 Chrome：按日期分组、快速搜索、时间筛选、最近关闭、跨设备标签页与批量管理。",
+  "description": "__MSG_extDescription__",
   "minimum_chrome_version": "116",
   "permissions": [
     "history",
@@ -17,7 +18,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "历史记录",
+    "default_title": "__MSG_actionTitle__",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
@@ -36,7 +37,7 @@
         "default": "Alt+H",
         "mac": "Alt+Shift+H"
       },
-      "description": "打开完整历史记录"
+      "description": "__MSG_commandOpenHistory__"
     }
   }
 }

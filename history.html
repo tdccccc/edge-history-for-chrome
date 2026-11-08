@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>历史记录</title>
+  <title data-i18n="app.pageTitleHistory">历史记录</title>
   <link rel="icon" href="icons/icon32.png">
   <script src="theme-boot.js"></script>
   <link rel="stylesheet" href="history.css">
@@ -15,29 +15,29 @@
       <div class="brand">
         <img class="brand-logo" src="icons/icon48.png" width="32" height="32" alt="">
         <div class="brand-text">
-          <strong>历史记录</strong>
-          <span>Edge 风格</span>
+          <strong data-i18n="app.brand">历史记录</strong>
+          <span data-i18n="app.tagline">EDGE 风格</span>
         </div>
       </div>
 
-      <nav class="nav" aria-label="历史记录导航">
-        <button class="nav-item is-active" type="button" data-view="history" data-icon="history" aria-label="历史记录" title="历史记录" aria-current="page"><span class="nav-label">历史记录</span></button>
-        <button class="nav-item" type="button" data-view="closed" data-icon="restore" aria-label="最近关闭" title="最近关闭"><span class="nav-label">最近关闭</span></button>
-        <button class="nav-item" type="button" data-view="devices" data-icon="devices" aria-label="来自其他设备" title="来自其他设备"><span class="nav-label">来自其他设备</span></button>
+      <nav class="nav" data-i18n-aria-label="nav.aria" aria-label="历史记录导航">
+        <button class="nav-item is-active" type="button" data-view="history" data-icon="history" data-i18n-aria-label="nav.history" data-i18n-title="nav.history" aria-label="历史记录" title="历史记录" aria-current="page"><span class="nav-label" data-i18n="nav.history">历史记录</span></button>
+        <button class="nav-item" type="button" data-view="closed" data-icon="restore" data-i18n-aria-label="nav.closed" data-i18n-title="nav.closed" aria-label="最近关闭" title="最近关闭"><span class="nav-label" data-i18n="nav.closed">最近关闭</span></button>
+        <button class="nav-item" type="button" data-view="devices" data-icon="devices" data-i18n-aria-label="nav.devices" data-i18n-title="nav.devices" aria-label="来自其他设备" title="来自其他设备"><span class="nav-label" data-i18n="nav.devices">来自其他设备</span></button>
       </nav>
 
-      <div class="demo-badge" id="demoBadge" hidden>演示数据</div>
+      <div class="demo-badge" id="demoBadge" data-i18n="app.demoBadge" hidden>演示数据</div>
 
       <div class="sidebar-spacer"></div>
 
-      <div class="shortcut-card" id="shortcutCard">
+      <div class="shortcut-card" id="shortcutCard" data-i18n-title="sidebar.shortcutTitle" title="可在 chrome://extensions/shortcuts 中修改">
         <div class="shortcut-keys"><kbd>Alt</kbd><span>+</span><kbd>H</kbd></div>
-        <p>随时打开历史记录</p>
+        <p data-i18n="sidebar.shortcut">随时打开历史记录</p>
       </div>
 
       <div class="sidebar-footer">
-        <button class="icon-btn" type="button" id="themeBtn" data-icon="moon" aria-label="切换主题" title="切换主题"></button>
-        <button class="icon-btn" type="button" id="settingsBtn" data-icon="settings" aria-label="设置" title="设置"></button>
+        <button class="icon-btn" type="button" id="themeBtn" data-icon="moon" data-i18n-aria-label="sidebar.themeToggle" data-i18n-title="sidebar.themeToggle" aria-label="切换主题" title="切换主题"></button>
+        <button class="icon-btn" type="button" id="settingsBtn" data-icon="settings" data-i18n-aria-label="sidebar.settings" data-i18n-title="sidebar.settings" aria-label="设置" title="设置"></button>
         <span class="version" id="versionLabel">v1.0.0</span>
       </div>
     </aside>
@@ -47,65 +47,65 @@
         <div class="topbar-inner">
           <div class="title-row">
             <div class="title-copy">
-              <h1 id="pageTitle">历史记录</h1>
-              <p id="pageSubtitle">按日期查看、搜索和管理你的浏览记录</p>
+              <h1 id="pageTitle" data-i18n="view.history.title">历史记录</h1>
+              <p id="pageSubtitle" data-i18n="view.history.subtitle">按日期查看、搜索和管理你的浏览记录</p>
             </div>
             <div class="title-actions" id="historyHeaderActions">
-              <button class="btn btn-quiet" type="button" id="selectBtn" data-icon="select" aria-pressed="false"><span>选择</span></button>
-              <button class="btn btn-quiet" type="button" id="exportBtn" data-icon="file-text"><span>导出</span></button>
-              <button class="icon-btn" type="button" id="clearBtn" data-icon="trash" aria-label="清除历史记录" title="清除历史记录"></button>
+              <button class="btn btn-quiet" type="button" id="selectBtn" data-icon="select" aria-pressed="false"><span data-i18n="common.select">选择</span></button>
+              <button class="btn btn-quiet" type="button" id="exportBtn" data-icon="file-text"><span data-i18n="common.export">导出</span></button>
+              <button class="icon-btn" type="button" id="clearBtn" data-icon="trash" data-i18n-aria-label="history.clear" data-i18n-title="history.clear" aria-label="清除历史记录" title="清除历史记录"></button>
             </div>
             <div class="title-actions" id="refreshActions" hidden>
-              <button class="btn btn-quiet" type="button" id="refreshBtn" data-icon="refresh"><span>刷新</span></button>
+              <button class="btn btn-quiet" type="button" id="refreshBtn" data-icon="refresh"><span data-i18n="common.refresh">刷新</span></button>
             </div>
           </div>
 
           <div class="toolbar" id="historyToolbar">
             <div class="search-field" id="searchField">
               <span class="search-icon" data-icon="search"></span>
-              <input id="searchInput" type="search" autocomplete="off" spellcheck="false" placeholder="搜索历史记录（标题或网址）" aria-label="搜索历史记录">
-              <button class="search-clear" type="button" id="searchClear" data-icon="close" aria-label="清除搜索" hidden></button>
+              <input id="searchInput" type="search" autocomplete="off" spellcheck="false" data-i18n-placeholder="history.searchPlaceholder" data-i18n-aria-label="history.searchAria" placeholder="搜索历史记录（标题或网址）" aria-label="搜索历史记录">
+              <button class="search-clear" type="button" id="searchClear" data-icon="close" data-i18n-aria-label="common.clearSearch" aria-label="清除搜索" hidden></button>
               <kbd class="search-kbd" id="searchKbd">/</kbd>
             </div>
 
             <div class="menu-anchor" id="rangeWrap">
               <button class="btn btn-filter" type="button" id="rangeBtn" aria-haspopup="menu" aria-expanded="false">
                 <span data-icon="calendar"></span>
-                <span id="rangeLabel">全部时间</span>
+                <span id="rangeLabel" data-i18n="range.all">全部时间</span>
                 <span class="filter-chevron" data-icon="chevron-down"></span>
               </button>
 
-              <div class="popover range-popover" id="rangePopover" role="menu" aria-label="选择时间范围" hidden>
-                <div class="popover-heading">时间范围</div>
+              <div class="popover range-popover" id="rangePopover" role="menu" data-i18n-aria-label="range.menuAria" aria-label="选择时间范围" hidden>
+                <div class="popover-heading" data-i18n="range.heading">时间范围</div>
                 <button class="popover-item" type="button" role="menuitemradio" aria-checked="true" data-range="all">
-                  <span>全部时间</span><span class="range-check" data-icon="check"></span>
+                  <span data-i18n="range.all">全部时间</span><span class="range-check" data-icon="check"></span>
                 </button>
                 <button class="popover-item" type="button" role="menuitemradio" aria-checked="false" data-range="hour">
-                  <span>最近 1 小时</span><span class="range-check" data-icon="check"></span>
+                  <span data-i18n="range.hour">最近 1 小时</span><span class="range-check" data-icon="check"></span>
                 </button>
                 <button class="popover-item" type="button" role="menuitemradio" aria-checked="false" data-range="24h">
-                  <span>最近 24 小时</span><span class="range-check" data-icon="check"></span>
+                  <span data-i18n="range.24h">最近 24 小时</span><span class="range-check" data-icon="check"></span>
                 </button>
                 <button class="popover-item" type="button" role="menuitemradio" aria-checked="false" data-range="today">
-                  <span>今天</span><span class="range-check" data-icon="check"></span>
+                  <span data-i18n="range.today">今天</span><span class="range-check" data-icon="check"></span>
                 </button>
                 <button class="popover-item" type="button" role="menuitemradio" aria-checked="false" data-range="yesterday">
-                  <span>昨天</span><span class="range-check" data-icon="check"></span>
+                  <span data-i18n="range.yesterday">昨天</span><span class="range-check" data-icon="check"></span>
                 </button>
                 <button class="popover-item" type="button" role="menuitemradio" aria-checked="false" data-range="7d">
-                  <span>最近 7 天</span><span class="range-check" data-icon="check"></span>
+                  <span data-i18n="range.7d">最近 7 天</span><span class="range-check" data-icon="check"></span>
                 </button>
                 <button class="popover-item" type="button" role="menuitemradio" aria-checked="false" data-range="30d">
-                  <span>最近 30 天</span><span class="range-check" data-icon="check"></span>
+                  <span data-i18n="range.30d">最近 30 天</span><span class="range-check" data-icon="check"></span>
                 </button>
                 <div class="popover-divider"></div>
                 <button class="popover-item" type="button" id="customRangeBtn" aria-expanded="false" data-range="custom">
-                  <span>自定义范围…</span><span class="range-check" data-icon="calendar"></span>
+                  <span data-i18n="range.customEllipsis">自定义范围…</span><span class="range-check" data-icon="calendar"></span>
                 </button>
                 <div class="custom-range" id="customRange" hidden>
-                  <label><span>开始日期</span><input type="date" id="startDate"></label>
-                  <label><span>结束日期</span><input type="date" id="endDate"></label>
-                  <button class="btn btn-primary btn-block" type="button" id="applyRange">应用</button>
+                  <label><span data-i18n="range.startDate">开始日期</span><input type="date" id="startDate"></label>
+                  <label><span data-i18n="range.endDate">结束日期</span><input type="date" id="endDate"></label>
+                  <button class="btn btn-primary btn-block" type="button" id="applyRange" data-i18n="range.apply">应用</button>
                 </div>
               </div>
             </div>
@@ -121,20 +121,20 @@
             <div class="welcome-icon" data-icon="history"></div>
             <div class="welcome-main">
               <div class="welcome-head">
-                <h2>欢迎使用 Edge 风格历史记录</h2>
-                <span class="soft-pill">本地运行</span>
+                <h2 data-i18n="welcome.title">欢迎使用 Edge 风格历史记录</h2>
+                <span class="soft-pill" data-i18n="welcome.local">本地运行</span>
               </div>
-              <p>按日期分组、搜索筛选、最近关闭和跨设备标签页都在这一页。把扩展固定到工具栏，或按 <span id="welcomeShortcut"><kbd>Alt</kbd> + <kbd>H</kbd></span> 随时打开。</p>
-              <p class="welcome-note">Chrome 不允许扩展替换 <code>chrome://history</code> 或 Ctrl+H，建议把此页面固定为常用入口。</p>
+              <p><span data-i18n="welcome.bodyBefore">按日期分组、搜索筛选、最近关闭和跨设备标签页都在这一页。把扩展固定到工具栏，或按</span> <span id="welcomeShortcut"><kbd>Alt</kbd> + <kbd>H</kbd></span> <span data-i18n="welcome.bodyAfter">随时打开。</span></p>
+              <p class="welcome-note" data-i18n="welcome.note">Chrome 不允许扩展替换 chrome://history 或 Ctrl+H，建议把此页面固定为常用入口。</p>
             </div>
             <div class="welcome-actions">
-              <button class="btn btn-primary" type="button" id="dismissWelcome">知道了</button>
-              <button class="icon-btn" type="button" id="closeWelcome" data-icon="close" aria-label="关闭欢迎提示"></button>
+              <button class="btn btn-primary" type="button" id="dismissWelcome" data-i18n="welcome.dismiss">知道了</button>
+              <button class="icon-btn" type="button" id="closeWelcome" data-icon="close" data-i18n-aria-label="welcome.close" aria-label="关闭欢迎提示"></button>
             </div>
           </section>
 
           <section class="view" id="historyView">
-            <div class="history-list" id="historyList" role="list" aria-label="浏览历史记录"></div>
+            <div class="history-list" id="historyList" role="list" data-i18n-aria-label="history.listAria" aria-label="浏览历史记录"></div>
             <div class="sentinel" id="sentinel" aria-hidden="true"></div>
             <div class="list-footer" id="listFooter"></div>
           </section>
@@ -142,17 +142,17 @@
           <section class="view" id="closedView" hidden>
             <div class="view-meta">
               <span id="closedMeta"></span>
-              <span>Chrome 最多保留最近 25 个关闭项</span>
+              <span data-i18n="closed.limitNote">Chrome 最多保留最近 25 个关闭项</span>
             </div>
-            <div class="session-list" id="closedList"></div>
+            <div class="session-list" id="closedList" data-i18n-aria-label="closed.listAria" aria-label="最近关闭的标签页"></div>
           </section>
 
           <section class="view" id="devicesView" hidden>
             <div class="view-meta">
               <span id="devicesMeta"></span>
-              <span>需要登录 Chrome 并开启同步</span>
+              <span data-i18n="devices.note">需要登录 Chrome 并开启同步</span>
             </div>
-            <div class="device-list" id="devicesList"></div>
+            <div class="device-list" id="devicesList" data-i18n-aria-label="devices.listAria" aria-label="来自其他设备的标签页"></div>
           </section>
         </div>
       </div>
@@ -160,12 +160,12 @@
   </div>
 
   <div class="bulk-bar" id="bulkBar" hidden>
-    <span class="bulk-count" id="bulkCount">已选择 0 项</span>
+    <span class="bulk-count" id="bulkCount"></span>
     <span class="bulk-divider" aria-hidden="true"></span>
-    <button class="bulk-link" type="button" id="selectAllBtn">全选已加载</button>
-    <button class="bulk-link" type="button" id="clearSelectionBtn">取消选择</button>
-    <button class="btn btn-danger" type="button" id="bulkDeleteBtn" data-icon="trash" disabled>删除</button>
-    <button class="icon-btn" type="button" id="exitSelectBtn" data-icon="close" aria-label="退出选择模式" title="退出选择模式"></button>
+    <button class="bulk-link" type="button" id="selectAllBtn" data-i18n="history.selectAll">全选已加载</button>
+    <button class="bulk-link" type="button" id="clearSelectionBtn" data-i18n="history.cancelSelection">取消选择</button>
+    <button class="btn btn-danger" type="button" id="bulkDeleteBtn" data-icon="trash" data-i18n="history.bulkDelete" disabled>删除</button>
+    <button class="icon-btn" type="button" id="exitSelectBtn" data-icon="close" data-i18n-aria-label="history.bulkExit" data-i18n-title="history.bulkExit" aria-label="退出选择模式" title="退出选择模式"></button>
   </div>
 
   <div class="context-menu" id="rowMenu" role="menu" hidden></div>

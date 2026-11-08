@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>历史记录</title>
+  <title data-i18n="app.popupTitle">历史记录</title>
+  <link rel="icon" href="icons/icon32.png">
   <script src="theme-boot.js"></script>
   <link rel="stylesheet" href="popup.css">
 </head>
@@ -14,63 +15,63 @@
       <div class="p-brand">
         <img src="icons/icon48.png" width="28" height="28" alt="">
         <div>
-          <strong>历史记录</strong>
-          <span>EDGE 风格</span>
+          <strong data-i18n="app.brand">历史记录</strong>
+          <span data-i18n="app.tagline">EDGE 风格</span>
         </div>
-        <span class="p-demo" id="demoPill" hidden>演示</span>
+        <span class="p-demo" id="demoPill" data-i18n="app.demoPill" hidden>演示</span>
       </div>
       <div class="p-header-actions">
-        <button class="p-open-full" type="button" id="openFull" aria-label="打开完整历史记录" title="打开完整历史记录">
+        <button class="p-open-full" type="button" id="openFull" data-i18n-aria-label="popup.openFullAria" data-i18n-title="popup.openFullAria" aria-label="打开完整历史记录" title="打开完整历史记录">
           <span data-icon="history"></span>
-          <span>完整页</span>
+          <span data-i18n="popup.fullPage">完整页</span>
           <span class="p-open-full-arrow" data-icon="chevron-right"></span>
         </button>
-        <button class="p-icon-btn" type="button" id="settingsBtn" data-icon="settings" aria-label="设置" title="设置"></button>
+        <button class="p-icon-btn" type="button" id="settingsBtn" data-icon="settings" data-i18n-aria-label="common.settings" data-i18n-title="common.settings" aria-label="设置" title="设置"></button>
       </div>
     </header>
 
     <div class="p-search">
       <span class="p-search-icon" data-icon="search"></span>
-      <input id="searchInput" type="search" autocomplete="off" spellcheck="false" placeholder="搜索历史记录" aria-label="搜索历史记录">
-      <button class="p-search-clear" type="button" id="searchClear" data-icon="close" aria-label="清除搜索" hidden></button>
+      <input id="searchInput" type="search" autocomplete="off" spellcheck="false" data-i18n-placeholder="popup.searchHistory" data-i18n-aria-label="popup.searchHistory" placeholder="搜索历史记录" aria-label="搜索历史记录">
+      <button class="p-search-clear" type="button" id="searchClear" data-icon="close" data-i18n-aria-label="common.clearSearch" aria-label="清除搜索" hidden></button>
       <kbd class="p-search-kbd" id="searchKbd">/</kbd>
     </div>
 
     <div class="p-toolbar">
-      <div class="p-tabs" role="tablist" aria-label="历史记录视图">
-        <button class="p-tab is-active" type="button" role="tab" id="historyTab" aria-selected="true" aria-controls="historyView" data-view="history">历史记录</button>
-        <button class="p-tab" type="button" role="tab" id="closedTab" aria-selected="false" aria-controls="closedView" data-view="closed">最近关闭</button>
+      <div class="p-tabs" role="tablist" data-i18n-aria-label="popup.tabsAria" aria-label="历史记录视图">
+        <button class="p-tab is-active" type="button" role="tab" id="historyTab" aria-selected="true" aria-controls="historyView" data-view="history" data-i18n="popup.historyTab">历史记录</button>
+        <button class="p-tab" type="button" role="tab" id="closedTab" aria-selected="false" aria-controls="closedView" data-view="closed" data-i18n="popup.closedTab">最近关闭</button>
       </div>
 
       <div class="p-filter-wrap" id="filterWrap">
-        <button class="p-filter" type="button" id="rangeBtn" aria-haspopup="menu" aria-expanded="false" aria-label="按时间筛选">
+        <button class="p-filter" type="button" id="rangeBtn" aria-haspopup="menu" aria-expanded="false" data-i18n-aria-label="popup.filterAria" aria-label="按时间筛选">
           <span data-icon="calendar"></span>
-          <span id="rangeLabel">全部时间</span>
+          <span id="rangeLabel" data-i18n="range.all">全部时间</span>
           <span class="p-filter-chevron" data-icon="chevron-down"></span>
         </button>
 
-        <div class="p-menu" id="rangePopover" role="menu" aria-label="时间范围" hidden>
-          <div class="p-menu-heading">时间范围</div>
+        <div class="p-menu" id="rangePopover" role="menu" data-i18n-aria-label="popup.menuAria" aria-label="时间范围" hidden>
+          <div class="p-menu-heading" data-i18n="range.heading">时间范围</div>
           <button class="p-menu-item is-selected" type="button" role="menuitemradio" aria-checked="true" data-range="all">
-            <span>全部时间</span><span class="p-menu-check" data-icon="check"></span>
+            <span data-i18n="range.all">全部时间</span><span class="p-menu-check" data-icon="check"></span>
           </button>
           <button class="p-menu-item" type="button" role="menuitemradio" aria-checked="false" data-range="hour">
-            <span>最近 1 小时</span><span class="p-menu-check" data-icon="check"></span>
+            <span data-i18n="range.hour">最近 1 小时</span><span class="p-menu-check" data-icon="check"></span>
           </button>
           <button class="p-menu-item" type="button" role="menuitemradio" aria-checked="false" data-range="24h">
-            <span>最近 24 小时</span><span class="p-menu-check" data-icon="check"></span>
+            <span data-i18n="range.24h">最近 24 小时</span><span class="p-menu-check" data-icon="check"></span>
           </button>
           <button class="p-menu-item" type="button" role="menuitemradio" aria-checked="false" data-range="today">
-            <span>今天</span><span class="p-menu-check" data-icon="check"></span>
+            <span data-i18n="range.today">今天</span><span class="p-menu-check" data-icon="check"></span>
           </button>
           <button class="p-menu-item" type="button" role="menuitemradio" aria-checked="false" data-range="yesterday">
-            <span>昨天</span><span class="p-menu-check" data-icon="check"></span>
+            <span data-i18n="range.yesterday">昨天</span><span class="p-menu-check" data-icon="check"></span>
           </button>
           <button class="p-menu-item" type="button" role="menuitemradio" aria-checked="false" data-range="7d">
-            <span>最近 7 天</span><span class="p-menu-check" data-icon="check"></span>
+            <span data-i18n="range.7d">最近 7 天</span><span class="p-menu-check" data-icon="check"></span>
           </button>
           <button class="p-menu-item" type="button" role="menuitemradio" aria-checked="false" data-range="30d">
-            <span>最近 30 天</span><span class="p-menu-check" data-icon="check"></span>
+            <span data-i18n="range.30d">最近 30 天</span><span class="p-menu-check" data-icon="check"></span>
           </button>
         </div>
       </div>
@@ -78,15 +79,15 @@
 
     <div class="p-scroll" id="scrollArea">
       <div id="historyView" role="tabpanel" aria-labelledby="historyTab">
-        <div class="p-list-meta"><span class="p-meta-label">按日期</span><span id="historyCount" aria-live="polite"></span></div>
-        <div class="p-group-list" id="historyList" role="list" aria-label="浏览历史记录"></div>
+        <div class="p-list-meta"><span class="p-meta-label" data-i18n="popup.byDate">按日期</span><span id="historyCount" aria-live="polite"></span></div>
+        <div class="p-group-list" id="historyList" role="list" data-i18n-aria-label="popup.historyListAria" aria-label="浏览历史记录"></div>
         <div class="p-list-footer" id="listFooter"></div>
         <div class="p-sentinel" id="sentinel" aria-hidden="true"></div>
       </div>
 
       <div id="closedView" role="tabpanel" aria-labelledby="closedTab" hidden>
-        <div class="p-list-meta"><span class="p-meta-label">最近关闭</span><span id="closedCount" aria-live="polite"></span></div>
-        <div class="p-closed-list" id="closedList" aria-label="最近关闭的标签页"></div>
+        <div class="p-list-meta"><span class="p-meta-label" data-i18n="popup.closedMeta">最近关闭</span><span id="closedCount" aria-live="polite"></span></div>
+        <div class="p-closed-list" id="closedList" data-i18n-aria-label="popup.closedListAria" aria-label="最近关闭的标签页"></div>
       </div>
     </div>
 

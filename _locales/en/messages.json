@@ -1,0 +1,32 @@
+{
+  "extName": {
+    "message": "Edge-style History"
+  },
+  "extShortName": {
+    "message": "Edge History"
+  },
+  "extDescription": {
+    "message": "Bring Edge's history experience to Chrome: date grouping, fast search, time filters, recently closed tabs, tabs from other devices, and bulk management."
+  },
+  "actionTitle": {
+    "message": "History"
+  },
+  "commandOpenHistory": {
+    "message": "Open full history"
+  },
+  "contextMenuSearch": {
+    "message": "Search history for “%s”"
+  },
+  "omniboxDefault": {
+    "message": "Search history"
+  },
+  "omniboxSearch": {
+    "message": "Search history for “$1”",
+    "placeholders": {
+      "text": {
+        "content": "$1",
+        "example": "chrome"
+      }
+    }
+  }
+}

@@ -3,6 +3,8 @@
  * Everything runs locally; there is no network access anywhere in the UI.
  */
 
+import { getLocale, t } from './i18n.js';
+
 export {
   DEFAULT_SETTINGS,
   SETTINGS_KEYS,
@@ -14,21 +16,6 @@ export {
 } from './settings.js';
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
-export const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
-
-export const TRANSITION_LABELS = {
-  link: '点击链接',
-  typed: '地址栏输入',
-  auto_bookmark: '书签',
-  auto_subframe: '子框架',
-  manual_subframe: '手动子框架',
-  generated: '自动跳转',
-  auto_toplevel: '自动打开',
-  form_submit: '表单提交',
-  reload: '重新加载',
-  keyword: '搜索关键字',
-  keyword_generated: '关键字跳转'
-};
 
 export function getChromeApi() {
   return globalThis.__demoChrome || globalThis.chrome;
@@ -188,7 +175,7 @@ export function urlParts(url) {
   if (!parsed) return { host: String(url || ''), rest: '' };
 
   if (parsed.protocol === 'file:') {
-    return { host: '本地文件', rest: safeDecode(parsed.pathname) };
+    return { host: t('url.localFile'), rest: safeDecode(parsed.pathname) };
   }
 
   const rest = (parsed.pathname === '/' ? '' : parsed.pathname) + parsed.search + parsed.hash;
@@ -256,11 +243,25 @@ export function letterFor(url, title = '') {
 
 /* ------------------------------------------------------------------- time */
 
-const timeFormatter = new Intl.DateTimeFormat('zh-CN', {
-  hour: '2-digit',
-  minute: '2-digit',
-  hourCycle: 'h23'
-});
+const formatterCache = new Map();
+
+function getFormatter(kind, options) {
+  const locale = getLocale();
+  const key = `${kind}:${locale}:${JSON.stringify(options)}`;
+  let formatter = formatterCache.get(key);
+  if (formatter) return formatter;
+
+  if (kind === 'number') formatter = new Intl.NumberFormat(locale, options);
+  else if (kind === 'relative') formatter = new Intl.RelativeTimeFormat(locale, options);
+  else formatter = new Intl.DateTimeFormat(locale, options);
+
+  formatterCache.set(key, formatter);
+  return formatter;
+}
+
+function dateFormat(options) {
+  return getFormatter('date', options);
+}
 
 export function startOfDay(value = Date.now()) {
   const date = new Date(value);
@@ -296,17 +297,25 @@ export function dateKey(value) {
 }
 
 export function formatTime(value) {
-  return timeFormatter.format(new Date(value));
+  return dateFormat({ hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 }
 
 export function formatFullDate(value) {
-  const date = new Date(value);
-  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${formatTime(value)}`;
+  return dateFormat({ dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 }
 
 export function formatDay(value) {
+  return dateFormat({ dateStyle: 'long' }).format(new Date(value));
+}
+
+function formatShortDate(value) {
   const date = new Date(value);
-  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return dateFormat({
+    month: 'short',
+    day: 'numeric',
+    ...(sameYear ? {} : { year: 'numeric' })
+  }).format(date);
 }
 
 /**
@@ -323,29 +332,37 @@ export function formatDateHeader(value, now = Date.now()) {
   const date = new Date(value);
   const today = startOfDay(now);
   const day = startOfDay(value);
-  if (day === today) return '今天';
-  if (day === startOfDay(addDays(now, -1))) return '昨天';
+  if (day === today) return t('time.today');
+  if (day === startOfDay(addDays(now, -1))) return t('time.yesterday');
 
   const sameYear = date.getFullYear() === new Date(now).getFullYear();
-  const prefix = sameYear ? '' : `${date.getFullYear()}年`;
-  return `${prefix}${date.getMonth() + 1}月${date.getDate()}日 ${WEEKDAYS[date.getDay()]}`;
+  return dateFormat({
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    ...(sameYear ? {} : { year: 'numeric' })
+  }).format(date);
 }
 
 export function relativeTime(value, now = Date.now()) {
   if (!value) return '';
   const diff = Math.max(0, now - value);
-  if (diff < 60 * 1000) return '刚刚';
-  if (diff < 60 * 60 * 1000) return `${Math.floor(diff / 60000)} 分钟前`;
+  if (diff < 60 * 1000) return t('time.justNow');
+  if (diff < 60 * 60 * 1000) {
+    return getFormatter('relative', { numeric: 'auto', style: 'long' })
+      .format(-Math.floor(diff / 60000), 'minute');
+  }
 
   const day = startOfDay(value);
   const today = startOfDay(now);
-  if (day === today) return `今天 ${formatTime(value)}`;
-  if (day === startOfDay(addDays(now, -1))) return `昨天 ${formatTime(value)}`;
-  if (Math.round((today - day) / DAY_MS) < 7) return `${WEEKDAYS[new Date(value).getDay()]} ${formatTime(value)}`;
+  if (day === today) return t('time.todayAt', { time: formatTime(value) });
+  if (day === startOfDay(addDays(now, -1))) return t('time.yesterdayAt', { time: formatTime(value) });
+  if (Math.round((today - day) / DAY_MS) < 7) {
+    const weekday = dateFormat({ weekday: 'long' }).format(new Date(value));
+    return `${weekday} ${formatTime(value)}`;
+  }
 
-  const date = new Date(value);
-  const sameYear = date.getFullYear() === new Date(now).getFullYear();
-  return `${sameYear ? '' : `${date.getFullYear()}年`}${date.getMonth() + 1}月${date.getDate()}日`;
+  return formatShortDate(value);
 }
 
 export function formatDateInput(value) {
@@ -358,21 +375,21 @@ export function formatDateInput(value) {
 
 export function formatRangeLabel(range, custom = {}) {
   switch (range) {
-    case 'hour': return '最近 1 小时';
-    case '24h': return '最近 24 小时';
-    case 'today': return '今天';
-    case 'yesterday': return '昨天';
-    case '7d': return '最近 7 天';
-    case '30d': return '最近 30 天';
+    case 'hour': return t('range.hour');
+    case '24h': return t('range.24h');
+    case 'today': return t('range.today');
+    case 'yesterday': return t('range.yesterday');
+    case '7d': return t('range.7d');
+    case '30d': return t('range.30d');
     case 'custom': {
       const start = custom.start ? parseDateInput(custom.start) : null;
       const end = custom.end ? parseDateInput(custom.end) : null;
-      if (!start && !end) return '自定义范围';
-      const startText = start ? `${start.getMonth() + 1}/${start.getDate()}` : '最早';
-      const endText = end ? `${end.getMonth() + 1}/${end.getDate()}` : '现在';
+      if (!start && !end) return t('range.custom');
+      const startText = start ? formatShortDate(start.getTime()) : t('range.earliest');
+      const endText = end ? formatShortDate(end.getTime()) : t('range.now');
       return `${startText} – ${endText}`;
     }
-    default: return '全部时间';
+    default: return t('range.all');
   }
 }
 
@@ -429,18 +446,18 @@ export function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-const COUNT_FORMATTER = new Intl.NumberFormat('zh-CN');
-
 export function formatCount(value) {
-  return COUNT_FORMATTER.format(Number(value) || 0);
+  return getFormatter('number', {}).format(Number(value) || 0);
 }
 
 export function pluralTabs(count) {
-  return `${formatCount(count)} 个标签页`;
+  return t('count.tabs', { count });
 }
 
 export function transitionLabel(transition) {
-  return TRANSITION_LABELS[transition] || transition || '访问';
+  const key = `transition.${transition}`;
+  const label = t(key);
+  return label === key ? (transition || t('common.visit')) : label;
 }
 
 export function groupItemsByDate(items) {
