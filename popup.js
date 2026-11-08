@@ -1,6 +1,7 @@
 import './shared/demo.js';
 import { mountIcons, icon } from './shared/icons.js';
 import { applyI18n, setLanguage, t } from './shared/i18n.js';
+import { nextHistoryPage } from './shared/pagination.js';
 import {
   canOpenUrl,
   historyItemKey,
@@ -42,6 +43,7 @@ const state = {
   seen: new Set(),
   canonicalIndex: new Map(),
   cursor: null,
+  tieLimit: 0,
   exhausted: false,
   loading: false,
   requestId: 0,
@@ -249,6 +251,7 @@ function resetHistoryData() {
   state.seen.clear();
   state.canonicalIndex.clear();
   state.cursor = null;
+  state.tieLimit = 0;
   state.exhausted = false;
   state.loading = false;
   state.error = null;
@@ -281,6 +284,7 @@ async function loadHistoryMore() {
     return;
   }
 
+  const pageSize = Math.max(PAGE_SIZE, state.tieLimit || 0);
   const requestId = ++state.requestId;
   const newIdFloor = nextItemId;
   const lastExistingTime = state.items.length ? state.items[state.items.length - 1].lastVisitTime : Infinity;
@@ -295,7 +299,7 @@ async function loadHistoryMore() {
       text: state.query,
       startTime: bounds.startTime,
       endTime,
-      maxResults: PAGE_SIZE
+      maxResults: pageSize
     });
     if (requestId !== state.requestId) return;
 
@@ -336,15 +340,16 @@ async function loadHistoryMore() {
 
     state.items.sort((a, b) => b.lastVisitTime - a.lastVisitTime);
 
-    if (!returned.length || returned.length < PAGE_SIZE) {
-      state.exhausted = true;
-    } else if (!Number.isFinite(oldest) || oldest <= bounds.startTime) {
-      state.exhausted = true;
-    } else if (state.cursor != null && oldest >= state.cursor) {
-      state.exhausted = true;
-    } else {
-      state.cursor = oldest;
-    }
+    const page = nextHistoryPage({
+      returned,
+      pageSize,
+      startTime: bounds.startTime,
+      cursor: state.cursor,
+      tieLimit: state.tieLimit
+    });
+    state.cursor = page.cursor;
+    state.exhausted = page.exhausted;
+    state.tieLimit = page.tieLimit;
   } catch (error) {
     if (requestId !== state.requestId) return;
     state.error = error;

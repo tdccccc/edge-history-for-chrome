@@ -1,6 +1,7 @@
 import './shared/demo.js';
 import { mountIcons, icon } from './shared/icons.js';
 import { applyI18n, setLanguage, t } from './shared/i18n.js';
+import { nextHistoryPage } from './shared/pagination.js';
 import {
   DEFAULT_SETTINGS,
   addDays,
@@ -80,6 +81,7 @@ const state = {
   seen: new Set(),
   canonicalIndex: new Map(),
   cursor: null,
+  tieLimit: 0,
   exhausted: false,
   loading: false,
   requestId: 0,
@@ -479,7 +481,8 @@ function historyBounds() {
 }
 
 function currentPageSize() {
-  return clamp(Number(state.settings.pageSize) || 100, 50, 100);
+  const preferred = clamp(Number(state.settings.pageSize) || 100, 50, 100);
+  return Math.max(preferred, state.tieLimit || 0);
 }
 
 function resetHistoryData() {
@@ -488,6 +491,7 @@ function resetHistoryData() {
   state.seen.clear();
   state.canonicalIndex.clear();
   state.cursor = null;
+  state.tieLimit = 0;
   state.exhausted = false;
   state.loading = false;
   state.error = null;
@@ -594,15 +598,16 @@ async function loadHistoryMore() {
     state.items.sort((a, b) => b.lastVisitTime - a.lastVisitTime);
     rebuildItemIndex();
 
-    if (!returned.length || returned.length < pageSize) {
-      state.exhausted = true;
-    } else if (!Number.isFinite(oldest) || oldest <= bounds.startTime) {
-      state.exhausted = true;
-    } else if (state.cursor != null && oldest >= state.cursor) {
-      state.exhausted = true;
-    } else {
-      state.cursor = oldest;
-    }
+    const page = nextHistoryPage({
+      returned,
+      pageSize,
+      startTime: bounds.startTime,
+      cursor: state.cursor,
+      tieLimit: state.tieLimit
+    });
+    state.cursor = page.cursor;
+    state.exhausted = page.exhausted;
+    state.tieLimit = page.tieLimit;
   } catch (error) {
     if (requestId !== state.requestId) return;
     state.error = error;
