@@ -2,7 +2,7 @@ import './shared/demo.js';
 import { mountIcons, icon } from './shared/icons.js';
 import {
   canOpenUrl,
-  canonicalHistoryUrl,
+  historyItemKey,
   debounce,
   escapeHtml,
   faviconUrl,
@@ -270,7 +270,7 @@ async function loadHistoryMore() {
       state.seen.add(raw.url);
 
       const canonicalKey = state.settings.mergeDuplicates
-        ? canonicalHistoryUrl(raw.url)
+        ? historyItemKey(raw.title, raw.url)
         : raw.url;
       const existing = state.canonicalIndex.get(canonicalKey);
       if (existing) {

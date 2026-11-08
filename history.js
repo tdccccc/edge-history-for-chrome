@@ -4,7 +4,7 @@ import {
   DEFAULT_SETTINGS,
   addDays,
   canOpenUrl,
-  canonicalHistoryUrl,
+  historyItemKey,
   clamp,
   copyText,
   debounce,
@@ -513,7 +513,7 @@ async function loadHistoryMore() {
       state.seen.add(raw.url);
 
       const canonicalKey = state.settings.mergeDuplicates
-        ? canonicalHistoryUrl(raw.url)
+        ? historyItemKey(raw.title, raw.url)
         : raw.url;
       const existing = state.canonicalIndex.get(canonicalKey);
       if (existing) {
@@ -578,7 +578,7 @@ function rebuildItemIndex() {
 function rebuildCanonicalIndex() {
   state.canonicalIndex.clear();
   for (const item of state.items) {
-    const key = state.settings.mergeDuplicates ? canonicalHistoryUrl(item.url) : item.url;
+    const key = state.settings.mergeDuplicates ? historyItemKey(item.title, item.url) : item.url;
     if (!state.canonicalIndex.has(key)) state.canonicalIndex.set(key, item);
   }
 }
@@ -2192,7 +2192,7 @@ function openSettings() {
         ${switchButton('showVisitCounts', '显示访问次数', state.settings.showVisitCounts)}
       </div>
       <div class="setting-row">
-        <div class="setting-copy"><strong>合并重复页面</strong><p>同一页面仅有 #片段、常见跟踪参数、末尾斜杠或 www 差异时只显示一条；不同查询参数仍分开。</p></div>
+        <div class="setting-copy"><strong>合并重复页面</strong><p>同一站点下标题相同、路径主体相同的记录合并为一条；忽略查询参数、#片段和末尾楼层数字。</p></div>
         ${switchButton('mergeDuplicates', '合并重复页面', state.settings.mergeDuplicates)}
       </div>
       <div class="setting-row">

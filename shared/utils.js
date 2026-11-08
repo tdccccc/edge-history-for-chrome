@@ -156,31 +156,30 @@ export function siteLabelOf(url) {
  * Split a URL into a compact host and the rest for a two-tone display.
  * Handles chrome:// and file:// pages without throwing.
  */
-const TRACKING_PARAMS = /^(?:utm_[a-z0-9_]+|fbclid|gclid|yclid|msclkid|mc_cid|mc_eid|igshid|si|spm|scm|vd_source|share_source|share_medium)$/i;
-
 /**
- * Best-effort identity for "the same page" in history. Chrome stores one entry
- * per distinct URL, so the same page can otherwise appear once per fragment,
- * common tracking parameter, trailing slash, or www host. Query parameters are
- * preserved (apart from known tracking keys) because they often select real
- * content.
+ * Stable identity for "the same page" in history. Chrome stores one entry per
+ * distinct URL, so pages with the same title and path can otherwise appear once
+ * per query string, fragment, trailing slash, or trailing numeric id
+ * (/topic/123/21 vs /topic/123/22). Keep the host and title in the key so
+ * unrelated pages with a generic title are not collapsed together.
  */
-export function canonicalHistoryUrl(url) {
-  try {
-    const parsed = new URL(String(url));
-    parsed.hash = '';
-    parsed.hostname = parsed.hostname.replace(/^www\./i, '');
-    if (parsed.pathname.length > 1) {
-      parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
-    }
-    for (const key of [...parsed.searchParams.keys()]) {
-      if (TRACKING_PARAMS.test(key)) parsed.searchParams.delete(key);
-    }
-    parsed.searchParams.sort();
-    return parsed.href;
-  } catch {
-    return String(url || '');
+export function historyItemKey(title, url) {
+  const parsed = parseUrl(url);
+  if (!parsed) {
+    return `${String(title || '').trim().toLocaleLowerCase()}\u0000${String(url || '')}`;
   }
+
+  let path = parsed.pathname.replace(/\/+$/, '') || '/';
+  // /topic/2971299/21 and /topic/2971299/23 are the same thread; collapse
+  // the trailing post id only when the preceding segment is numeric too, so
+  // an id-bearing path such as /zh/apps/6474233312 keeps its identity.
+  path = path.replace(/\/(\d+)\/\d+$/, '/$1') || '/';
+
+  const host = ['http:', 'https:'].includes(parsed.protocol)
+    ? parsed.hostname.toLocaleLowerCase().replace(/^www\./, '')
+    : `${parsed.protocol}//${parsed.hostname}`;
+  const label = String(title || '').trim().toLocaleLowerCase();
+  return `${host}\u0000${label}\u0000${path}`;
 }
 
 export function urlParts(url) {
