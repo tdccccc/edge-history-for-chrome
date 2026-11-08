@@ -286,7 +286,7 @@ async function main() {
   }
 
   if (typeof manifest.version !== 'string' || !SEMVER.test(manifest.version)) {
-    error('manifest.version must be a three-part semver string such as "1.2.0" (found ' + JSON.stringify(manifest.version) + ')');
+    error('manifest.version must be a three-part semver string such as "1.3.0" (found ' + JSON.stringify(manifest.version) + ')');
   } else {
     checks.push('version ' + manifest.version);
   }

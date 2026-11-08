@@ -7,7 +7,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -21,12 +21,16 @@ const width = Number(widthArg) || 1440;
 const height = Number(heightArg) || 960;
 const port = 9400 + Math.floor(Math.random() * 400);
 const profile = mkdtempSync(join(tmpdir(), 'edge-history-cdp-'));
-const chrome = spawn('google-chrome', [
+const home = mkdtempSync(join(tmpdir(), 'edge-history-home-'));
+const chromeBin = process.env.CHROME_BIN
+  || '/home/tiandc/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome';
+const chrome = spawn(chromeBin, [
   '--headless=new',
   '--no-sandbox',
   '--disable-gpu',
   '--disable-dev-shm-usage',
   '--hide-scrollbars',
+  '--force-device-scale-factor=1',
   '--no-first-run',
   '--no-default-browser-check',
   '--disable-extensions',
@@ -34,7 +38,7 @@ const chrome = spawn('google-chrome', [
   `--user-data-dir=${profile}`,
   'about:blank'
 ], {
-  env: { ...process.env, HOME: '/tmp/eh-home' },
+  env: { ...process.env, HOME: home },
   stdio: ['ignore', 'ignore', 'ignore']
 });
 
@@ -128,6 +132,9 @@ try {
     // ignore
   }
   chrome.kill('SIGTERM');
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  rmSync(profile, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true });
 }
 
 async function waitForDevtools(devtoolsPort) {

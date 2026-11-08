@@ -44,7 +44,6 @@ const RUNTIME_FILES = [
   'popup.js',
   'theme-boot.js',
   'LICENSE',
-  'README.md',
 ];
 const RUNTIME_DIRS = ['shared', 'icons'];
 const OPTIONAL_RUNTIME_DIRS = ['_locales'];

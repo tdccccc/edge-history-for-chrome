@@ -511,7 +511,7 @@ export function getVersion() {
   try {
     return getChromeApi().runtime.getManifest().version;
   } catch {
-    return '1.0.0';
+    return '1.3.0';
   }
 }
 
