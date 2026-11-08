@@ -2,6 +2,7 @@ import './shared/demo.js';
 import { mountIcons, icon } from './shared/icons.js';
 import {
   canOpenUrl,
+  canonicalHistoryUrl,
   debounce,
   escapeHtml,
   faviconUrl,
@@ -36,6 +37,7 @@ const state = {
   range: 'all',
   items: [],
   seen: new Set(),
+  canonicalIndex: new Map(),
   cursor: null,
   exhausted: false,
   loading: false,
@@ -202,6 +204,7 @@ function resetHistoryData() {
   state.requestId += 1;
   state.items = [];
   state.seen.clear();
+  state.canonicalIndex.clear();
   state.cursor = null;
   state.exhausted = false;
   state.loading = false;
@@ -264,14 +267,28 @@ async function loadHistoryMore() {
       if (lastVisitTime < bounds.startTime || lastVisitTime > bounds.endTime) continue;
       if (isOwnExtensionPage(raw.url)) continue;
       if (state.seen.has(raw.url)) continue;
-
       state.seen.add(raw.url);
-      state.items.push({
+
+      const canonicalKey = state.settings.mergeDuplicates
+        ? canonicalHistoryUrl(raw.url)
+        : raw.url;
+      const existing = state.canonicalIndex.get(canonicalKey);
+      if (existing) {
+        existing.visitCount += Number(raw.visitCount) || 1;
+        if (!existing.mergedUrls.includes(raw.url)) existing.mergedUrls.push(raw.url);
+        continue;
+      }
+
+      const item = {
         ...raw,
         title: normalizeTitle(raw.title, raw.url),
         lastVisitTime,
+        visitCount: Number(raw.visitCount) || 1,
+        mergedUrls: [raw.url],
         _id: nextItemId++
-      });
+      };
+      state.items.push(item);
+      state.canonicalIndex.set(canonicalKey, item);
     }
 
     state.items.sort((a, b) => b.lastVisitTime - a.lastVisitTime);

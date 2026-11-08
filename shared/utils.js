@@ -11,6 +11,7 @@ export const DEFAULT_SETTINGS = {
   showVisitCounts: true,
   openInNewTab: false,
   pageSize: 100,
+  mergeDuplicates: true,
   welcomeDismissed: false
 };
 
@@ -155,6 +156,33 @@ export function siteLabelOf(url) {
  * Split a URL into a compact host and the rest for a two-tone display.
  * Handles chrome:// and file:// pages without throwing.
  */
+const TRACKING_PARAMS = /^(?:utm_[a-z0-9_]+|fbclid|gclid|yclid|msclkid|mc_cid|mc_eid|igshid|si|spm|scm|vd_source|share_source|share_medium)$/i;
+
+/**
+ * Best-effort identity for "the same page" in history. Chrome stores one entry
+ * per distinct URL, so the same page can otherwise appear once per fragment,
+ * common tracking parameter, trailing slash, or www host. Query parameters are
+ * preserved (apart from known tracking keys) because they often select real
+ * content.
+ */
+export function canonicalHistoryUrl(url) {
+  try {
+    const parsed = new URL(String(url));
+    parsed.hash = '';
+    parsed.hostname = parsed.hostname.replace(/^www\./i, '');
+    if (parsed.pathname.length > 1) {
+      parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+    }
+    for (const key of [...parsed.searchParams.keys()]) {
+      if (TRACKING_PARAMS.test(key)) parsed.searchParams.delete(key);
+    }
+    parsed.searchParams.sort();
+    return parsed.href;
+  } catch {
+    return String(url || '');
+  }
+}
+
 export function urlParts(url) {
   const parsed = parseUrl(url);
   if (!parsed) return { host: String(url || ''), rest: '' };

@@ -190,6 +190,7 @@ function createDemoChrome(params) {
     showVisitCounts: true,
     openInNewTab: false,
     pageSize: 200,
+    mergeDuplicates: true,
     welcomeDismissed: true
   };
 

@@ -13,6 +13,7 @@ const DEFAULT_SETTINGS = {
   showVisitCounts: true,
   openInNewTab: false,
   pageSize: 100,
+  mergeDuplicates: true,
   welcomeDismissed: false
 };
 

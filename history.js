@@ -4,6 +4,7 @@ import {
   DEFAULT_SETTINGS,
   addDays,
   canOpenUrl,
+  canonicalHistoryUrl,
   clamp,
   copyText,
   debounce,
@@ -75,6 +76,7 @@ const state = {
   custom: { start: '', end: '' },
   items: [],
   seen: new Set(),
+  canonicalIndex: new Map(),
   cursor: null,
   exhausted: false,
   loading: false,
@@ -429,6 +431,7 @@ function resetHistoryData() {
   state.requestId += 1;
   state.items = [];
   state.seen.clear();
+  state.canonicalIndex.clear();
   state.cursor = null;
   state.exhausted = false;
   state.loading = false;
@@ -475,6 +478,7 @@ async function loadHistoryMore() {
   const pageSize = currentPageSize();
   const requestId = ++state.requestId;
   const newIdFloor = nextItemId;
+  const mergedIds = new Set();
   const lastExistingTime = state.items.length ? state.items[state.items.length - 1].lastVisitTime : Infinity;
   state.loading = true;
   state.error = null;
@@ -506,17 +510,30 @@ async function loadHistoryMore() {
       if (lastVisitTime < bounds.startTime || lastVisitTime > bounds.endTime) continue;
       if (isOwnExtensionPage(raw.url)) continue;
       if (state.seen.has(raw.url)) continue;
-
       state.seen.add(raw.url);
+
+      const canonicalKey = state.settings.mergeDuplicates
+        ? canonicalHistoryUrl(raw.url)
+        : raw.url;
+      const existing = state.canonicalIndex.get(canonicalKey);
+      if (existing) {
+        existing.visitCount += Number(raw.visitCount) || 1;
+        if (!existing.mergedUrls.includes(raw.url)) existing.mergedUrls.push(raw.url);
+        mergedIds.add(existing._id);
+        continue;
+      }
+
       const item = {
         ...raw,
         title: normalizeTitle(raw.title, raw.url),
         lastVisitTime,
         visitCount: Number(raw.visitCount) || 1,
+        mergedUrls: [raw.url],
         _id: nextItemId++
       };
       state.items.push(item);
       itemIndex.set(item._id, item);
+      state.canonicalIndex.set(canonicalKey, item);
     }
 
     state.items.sort((a, b) => b.lastVisitTime - a.lastVisitTime);
@@ -548,6 +565,7 @@ async function loadHistoryMore() {
         renderFooter();
       }
       updateResultCount();
+      refreshVisitChips(mergedIds);
     }
   }
 }
@@ -555,6 +573,37 @@ async function loadHistoryMore() {
 function rebuildItemIndex() {
   itemIndex.clear();
   for (const item of state.items) itemIndex.set(item._id, item);
+}
+
+function rebuildCanonicalIndex() {
+  state.canonicalIndex.clear();
+  for (const item of state.items) {
+    const key = state.settings.mergeDuplicates ? canonicalHistoryUrl(item.url) : item.url;
+    if (!state.canonicalIndex.has(key)) state.canonicalIndex.set(key, item);
+  }
+}
+
+function refreshVisitChips(ids) {
+  if (!ids.size) return;
+  for (const id of ids) {
+    const item = itemIndex.get(id);
+    if (!item) continue;
+    const row = el.historyList.querySelector(`.history-row[data-id="${id}"]`);
+    if (!row) continue;
+    let chip = row.querySelector('.visit-chip');
+    if (!state.settings.showVisitCounts || item.visitCount <= 1) {
+      chip?.remove();
+      continue;
+    }
+    if (!chip) {
+      chip = document.createElement('span');
+      chip.className = 'visit-chip';
+      chip.title = `${item.visitCount} 次访问`;
+      row.querySelector('.row-meta')?.prepend(chip);
+    }
+    chip.textContent = `${formatCount(item.visitCount)} 次`;
+    chip.title = `${item.visitCount} 次访问`;
+  }
 }
 
 function setupHistoryObserver() {
@@ -861,14 +910,15 @@ async function deleteSelected() {
 
   const confirmed = await showConfirm({
     title: '删除选中的历史记录？',
-    message: `将删除选中的 ${items.length} 个网址的全部浏览记录。Chrome 以网址为单位保存历史，删除会移除这些网址的所有访问记录，而不是只删除某一次访问。`,
+    message: `将删除选中的 ${items.length} 条记录的全部浏览记录。Chrome 以网址为单位保存历史，删除会移除这些网址的所有访问记录，而不是只删除某一次访问。`,
     note: '此操作无法撤销，也不会删除 Cookie、缓存或书签。',
     confirmLabel: '删除'
   });
   if (!confirmed) return;
 
-  const deleted = await deleteItemUrls(items.map((item) => item.url));
-  if (deleted > 0) showToast(`已删除 ${formatCount(deleted)} 条记录`, 'success');
+  const urls = items.flatMap((item) => item.mergedUrls?.length ? item.mergedUrls : [item.url]);
+  const deleted = await deleteItemUrls(urls);
+  if (deleted > 0) showToast(`已删除 ${formatCount(items.length)} 条记录`, 'success');
   else showToast('没有记录被删除，请重试', 'error');
   if (!state.items.length && state.selectMode) exitSelectMode();
 }
@@ -888,8 +938,9 @@ async function deleteItemUrls(urls) {
     state.requestId += 1;
     state.loading = false;
     state.items = state.items.filter((item) => !deletedUrls.has(item.url));
-    state.seen = new Set(state.items.map((item) => item.url));
+    state.seen = new Set(state.items.flatMap((item) => item.mergedUrls || [item.url]));
     rebuildItemIndex();
+    rebuildCanonicalIndex();
     state.selected.clear();
 
     if (!state.items.length) {
@@ -1008,16 +1059,20 @@ async function onRowMenuAction(action) {
 
 async function deleteItem(item) {
   const title = normalizeTitle(item.title, item.url);
+  const urls = item.mergedUrls?.length ? item.mergedUrls : [item.url];
+  const mergedNote = urls.length > 1
+    ? `这条记录合并了 ${urls.length} 个网址变体，会一并删除。`
+    : '';
   const confirmed = await showConfirm({
     title: '删除此历史记录？',
-    message: `将删除“${title}”的全部访问记录（共 ${item.visitCount || 1} 次）。Chrome 以网址为单位保存历史，因此无法只删除其中一次访问。`,
+    message: `将删除“${title}”的全部访问记录（共 ${item.visitCount || 1} 次）。${mergedNote}Chrome 以网址为单位保存历史，因此无法只删除其中一次访问。`,
     note: '此操作无法撤销。',
     confirmLabel: '删除'
   });
   if (!confirmed) return;
 
-  const index = state.items.findIndex((candidate) => candidate.url === item.url);
-  const deleted = await deleteItemUrls([item.url]);
+  const index = state.items.findIndex((candidate) => candidate._id === item._id);
+  const deleted = await deleteItemUrls(urls);
   showToast(deleted ? '已删除该记录' : '删除失败，请重试', deleted ? 'success' : 'error');
   if (!deleted) return;
 
@@ -2137,6 +2192,10 @@ function openSettings() {
         ${switchButton('showVisitCounts', '显示访问次数', state.settings.showVisitCounts)}
       </div>
       <div class="setting-row">
+        <div class="setting-copy"><strong>合并重复页面</strong><p>同一页面仅有 #片段、常见跟踪参数、末尾斜杠或 www 差异时只显示一条；不同查询参数仍分开。</p></div>
+        ${switchButton('mergeDuplicates', '合并重复页面', state.settings.mergeDuplicates)}
+      </div>
+      <div class="setting-row">
         <div class="setting-copy"><strong>在新标签页中打开</strong><p>点击历史记录时保留当前页面。也可以按住 Ctrl / ⌘ 临时在新标签页打开。</p></div>
         ${switchButton('openInNewTab', '在新标签页中打开', state.settings.openInNewTab)}
       </div>
@@ -2197,6 +2256,10 @@ function openSettings() {
           saveSettings({ [key]: value });
           if (key === 'showVisitCounts') {
             renderHistory();
+          }
+          if (key === 'mergeDuplicates') {
+            state.loadedOnce = false;
+            if (state.view === 'history') loadHistoryReset();
           }
         });
       }
