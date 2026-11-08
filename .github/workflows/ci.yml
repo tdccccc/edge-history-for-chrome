@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-and-build:
+    name: Validate and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Syntax-check JavaScript
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(background.js history.js popup.js theme-boot.js shared/*.js)
+          checked=0
+          for file in "${files[@]}"; do
+            if [[ -f "$file" ]]; then
+              node --check "$file"
+              checked=$((checked + 1))
+            fi
+          done
+          echo "Syntax checked $checked JavaScript file(s)."
+
+      - name: Validate manifest JSON
+        run: python3 -m json.tool manifest.json > /dev/null
+
+      - name: Validate extension
+        run: node tools/validate.mjs
+
+      - name: Run unit tests
+        run: node --test tests/unit/*.test.mjs
+
+      - name: Build extension package
+        run: node tools/build.mjs
+
+      # Stable Chrome ignores --load-extension, so the CDP suite needs Chrome
+      # for Testing 156 (or another CFT build). CI does not download a browser;
+      # set RUN_CDP_TESTS=1 and CHROME_BIN explicitly to opt in.
+      - name: Run CDP regression suite (opt-in, Chrome for Testing only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${RUN_CDP_TESTS:-0}" != "1" ]]; then
+            echo "RUN_CDP_TESTS is not 1; skipping the Chrome CDP suite."
+            exit 0
+          fi
+          if [[ -z "${CHROME_BIN:-}" || ! -x "${CHROME_BIN}" ]]; then
+            echo "CHROME_BIN must point to a Chrome for Testing binary when RUN_CDP_TESTS=1."
+            exit 1
+          fi
+          echo "Running tests/run.mjs with CHROME_BIN=$CHROME_BIN"
+          NODE_USE_ENV_PROXY=0 CHROME_BIN="$CHROME_BIN" node tests/run.mjs
+
+      - name: Upload extension zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: edge-history-for-chrome-package
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 14

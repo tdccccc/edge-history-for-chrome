@@ -19,14 +19,18 @@ function createDemoChrome(params) {
   const NOW = Date.now();
   let sequence = 0;
 
-  const entry = (title, url, minutesAgo, visitCount = 1) => ({
+  const makeEntry = (title, url, lastVisitTime, visitCount = 1) => ({
     id: ++sequence,
     title,
     url,
-    lastVisitTime: NOW - minutesAgo * MINUTE,
+    lastVisitTime,
     visitCount,
     typedCount: 0
   });
+
+  const entry = (title, url, minutesAgo, visitCount = 1) => (
+    makeEntry(title, url, NOW - minutesAgo * MINUTE, visitCount)
+  );
 
   let history = [
     entry('GitHub · Build software better, together', 'https://github.com/', 8, 14),
@@ -116,7 +120,7 @@ function createDemoChrome(params) {
     }
   ];
 
-  const devices = [
+  let devices = [
     {
       deviceName: 'MacBook Pro',
       sessions: [
@@ -173,6 +177,65 @@ function createDemoChrome(params) {
       ]
     }
   ];
+
+  /**
+   * Test-only demo fixtures driven by query parameters. Default demo data is
+   * unchanged so screenshots and the 36-row baseline stay stable.
+   */
+  function buildSyntheticHistory(count, tie) {
+    const rows = [];
+    const today = new Date(NOW);
+    today.setHours(0, 0, 0, 0);
+    const boundary = today.getTime();
+    const split = Math.ceil(count / 2);
+
+    for (let index = 0; index < count; index += 1) {
+      const lastVisitTime = tie
+        ? (index < split ? boundary - 1 : boundary)
+        : NOW - (index + 1) * 5 * MINUTE;
+      rows.push(makeEntry(
+        `Fixture page ${index + 1}`,
+        `https://fixture.example.com/page/${index + 1}`,
+        lastVisitTime,
+        1 + (index % 7)
+      ));
+    }
+    return rows;
+  }
+
+  function buildDuplicateHistory() {
+    const rows = [];
+    const variants = [
+      '/topic/123/21',
+      '/topic/123/23',
+      '/topic/123/21?page=2',
+      '/topic/123/23#reply',
+      '/topic/123/21/'
+    ];
+    variants.forEach((path, index) => {
+      rows.push(makeEntry(
+        'Duplicate thread',
+        `https://dupe.example.com${path}`,
+        NOW - (index + 1) * 1000,
+        2
+      ));
+    });
+    rows.push(makeEntry('Duplicate thread', 'https://dupe.example.com/topic/456/1', NOW - 10 * 1000, 1));
+    rows.push(makeEntry('Duplicate thread', 'https://dupe.example.com/topic/456/2', NOW - 11 * 1000, 1));
+    rows.push(makeEntry('Other title', 'https://dupe.example.com/topic/123/22', NOW - 12 * 1000, 3));
+    return rows;
+  }
+
+  const requestedCount = Number(params.get('count'));
+  if (params.get('empty') === '1') {
+    history = [];
+    closed = [];
+    devices = [];
+  } else if (params.get('duplicates') === '1') {
+    history = buildDuplicateHistory();
+  } else if (Number.isInteger(requestedCount) && requestedCount > 0) {
+    history = buildSyntheticHistory(Math.min(requestedCount, 20000), params.get('tie') === '1');
+  }
 
   const visitsByUrl = new Map();
   function buildVisits(item) {
