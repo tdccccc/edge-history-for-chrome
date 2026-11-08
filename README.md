@@ -39,7 +39,7 @@ Chrome 自带的历史记录页把记录平铺成一条很长的列表，缺少�
 
 ## 安装
 
-1. 下载或克隆本项目，或解压发布包 `dist/edge-history-for-chrome-1.2.0.zip`。
+1. 克隆本项目，或从 GitHub Releases 下载 `edge-history-for-chrome-1.2.0.zip` 后解压。`dist/` 是本地构建产物，不提交到仓库。
 2. 打开 `chrome://extensions`。
 3. 打开右上角的 **开发者模式**。
 4. 点击 **加载已解压的扩展程序**，选择本项目根目录（包含 `manifest.json` 的目录）。

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the extension PNG icons from a simple vector-free drawing.
+"""Generate the extension PNG icons from the local vector-style artwork.
 
 Run from the project root:
 
@@ -27,14 +27,14 @@ def lerp(a: int, b: int, t: float) -> float:
 
 def make_master() -> Image.Image:
     size = BASE * SUPERSAMPLE
-    # Diagonal gradient from bright azure (top-left) to deep blue (bottom-right).
-    top = (27, 139, 220)
-    bottom = (10, 90, 168)
+    # Violet -> azure, deliberately different from Edge's blue swirl.
+    top = (104, 86, 255)
+    bottom = (0, 151, 255)
     gradient = Image.new("RGBA", (size, size))
     pixels = gradient.load()
     for y in range(size):
         for x in range(size):
-            t = (x / size) * 0.32 + (y / size) * 0.68
+            t = (x / size) * 0.38 + (y / size) * 0.62
             pixels[x, y] = (
                 int(lerp(top[0], bottom[0], t)),
                 int(lerp(top[1], bottom[1], t)),
@@ -53,34 +53,32 @@ def make_master() -> Image.Image:
     gradient.putalpha(mask)
 
     draw = ImageDraw.Draw(gradient, "RGBA")
-    scale = SUPERSAMPLE
-    cx, cy = 64 * scale, 66 * scale
-    ring_r = 29 * scale
-    stroke = 9 * scale
+    s = SUPERSAMPLE
+    white = (255, 255, 255, 255)
 
-    draw.ellipse(
-        (cx - ring_r, cy - ring_r, cx + ring_r, cy + ring_r),
-        outline=(255, 255, 255, 255),
-        width=stroke,
-    )
-    # Clock hands: 12 o'clock, then towards 4 o'clock.
-    draw.line(
-        ((64 * scale, 46 * scale), (64 * scale, 66 * scale)),
-        fill=(255, 255, 255, 255),
-        width=stroke,
-    )
-    draw.line(
-        ((64 * scale, 66 * scale), (79 * scale, 74 * scale)),
-        fill=(255, 255, 255, 255),
-        width=stroke,
-    )
-    # Round the hand ends and the elbow.
-    for (x, y) in ((64, 46), (64, 66), (79, 74)):
-        r = stroke / 2
-        draw.ellipse(
-            (x * scale - r, y * scale - r, x * scale + r, y * scale + r),
-            fill=(255, 255, 255, 255),
+    # Timeline spine with three nodes and matching history rows.
+    draw.line(((34 * s, 34 * s), (34 * s, 94 * s)), fill=white, width=4 * s)
+    for x, y in ((34, 34), (34, 94)):
+        r = 2 * s
+        draw.ellipse((x * s - r, y * s - r, x * s + r, y * s + r), fill=white)
+
+    for y, end_x in ((40, 98), (64, 86), (88, 74)):
+        r = 7 * s
+        draw.ellipse((34 * s - r, y * s - r, 34 * s + r, y * s + r), fill=white)
+        draw.rounded_rectangle(
+            (47 * s, (y - 7) * s, end_x * s, (y + 7) * s),
+            radius=7 * s,
+            fill=white,
         )
+
+    # Subtle inner edge for a more finished squircle.
+    edge = 2 * s
+    draw.rounded_rectangle(
+        (inset + edge, inset + edge, size - inset - edge, size - inset - edge),
+        radius=radius - edge,
+        outline=(255, 255, 255, 28),
+        width=edge,
+    )
 
     return gradient.resize((BASE * 4, BASE * 4), Image.LANCZOS)
 
