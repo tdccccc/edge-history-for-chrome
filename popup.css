@@ -156,6 +156,18 @@ kbd {
   background: var(--surface);
 }
 
+/* Chrome can give the action popup less than 500px of usable height
+   (e.g. at 125–130% display scaling). Keep the intrinsic 500px height so
+   Chrome can open the popup, but shrink to the real viewport once it is
+   between 300 and 499px high. */
+@media (min-height: 300px) and (max-height: 499px) {
+  html,
+  body,
+  .popup {
+    height: 100vh;
+  }
+}
+
 /* ----------------------------------------------------------------- header */
 
 .p-header {
