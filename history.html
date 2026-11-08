@@ -52,6 +52,7 @@
             </div>
             <div class="title-actions" id="historyHeaderActions">
               <button class="btn btn-quiet" type="button" id="selectBtn" data-icon="select" aria-pressed="false"><span>选择</span></button>
+              <button class="btn btn-quiet" type="button" id="exportBtn" data-icon="file-text"><span>导出</span></button>
               <button class="icon-btn" type="button" id="clearBtn" data-icon="trash" aria-label="清除历史记录" title="清除历史记录"></button>
             </div>
             <div class="title-actions" id="refreshActions" hidden>
@@ -67,7 +68,7 @@
               <kbd class="search-kbd" id="searchKbd">/</kbd>
             </div>
 
-            <div class="menu-anchor">
+            <div class="menu-anchor" id="rangeWrap">
               <button class="btn btn-filter" type="button" id="rangeBtn" aria-haspopup="menu" aria-expanded="false">
                 <span data-icon="calendar"></span>
                 <span id="rangeLabel">全部时间</span>
@@ -78,6 +79,12 @@
                 <div class="popover-heading">时间范围</div>
                 <button class="popover-item" type="button" role="menuitemradio" aria-checked="true" data-range="all">
                   <span>全部时间</span><span class="range-check" data-icon="check"></span>
+                </button>
+                <button class="popover-item" type="button" role="menuitemradio" aria-checked="false" data-range="hour">
+                  <span>最近 1 小时</span><span class="range-check" data-icon="check"></span>
+                </button>
+                <button class="popover-item" type="button" role="menuitemradio" aria-checked="false" data-range="24h">
+                  <span>最近 24 小时</span><span class="range-check" data-icon="check"></span>
                 </button>
                 <button class="popover-item" type="button" role="menuitemradio" aria-checked="false" data-range="today">
                   <span>今天</span><span class="range-check" data-icon="check"></span>

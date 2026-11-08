@@ -1,13 +1,12 @@
 import './shared/demo.js';
 import { mountIcons, icon } from './shared/icons.js';
 import {
-  DAY_MS,
   DEFAULT_SETTINGS,
+  addDays,
   canOpenUrl,
   clamp,
   copyText,
   debounce,
-  endOfDay,
   escapeHtml,
   faviconUrl,
   formatCount,
@@ -24,6 +23,7 @@ import {
   isDemo,
   isEditableTarget,
   isHttpUrl,
+  isOwnExtensionPage,
   letterFor,
   normalizeTitle,
   parseDateInput,
@@ -34,6 +34,7 @@ import {
   siteKeyOf,
   siteLabelOf,
   startOfDay,
+  startOfNextDay,
   tileStyle,
   toMillis,
   transitionLabel,
@@ -42,6 +43,10 @@ import {
 
 const api = getChromeApi();
 const SESSION_LIMIT = 25;
+// chrome.history.search endTime is exclusive. Nudge the cursor by a tiny
+// amount so a page boundary never drops sibling visits that share the exact
+// same lastVisitTime (history imports and rapid addUrl calls can produce them).
+const SEARCH_TIME_EPSILON = 1;
 
 const VIEW_META = {
   history: {
@@ -64,6 +69,8 @@ const VIEW_META = {
 const state = {
   view: 'history',
   query: '',
+  queries: { history: '', closed: '', devices: '' },
+  appliedQuery: '',
   range: 'all',
   custom: { start: '', end: '' },
   items: [],
@@ -81,6 +88,8 @@ const state = {
   closed: [],
   closedLoaded: false,
   closedLoading: false,
+  closedRequestId: 0,
+  closedDirty: false,
   closedError: null,
   devices: [],
   devicesLoaded: false,
@@ -124,6 +133,7 @@ async function init() {
 
   setupTheme();
   initFromUrl();
+  state.queries[state.view] = state.query;
   updateSidebarShortcut();
   updateSearchUI();
   updateRangeUI();
@@ -134,10 +144,12 @@ async function init() {
   el.versionLabel.textContent = `v${getVersion().replace(/-.*$/, '')}`;
   el.shortcutCard.title = '可在 chrome://extensions/shortcuts 中修改';
 
-  setupHistoryObserver();
   try {
     api.sessions.onChanged.addListener?.(debounce(() => {
+      state.closedLoaded = false;
+      state.devicesLoaded = false;
       if (state.view === 'closed') loadClosed(true);
+      else if (state.view === 'devices') loadDevices(true);
     }, 300));
   } catch {
     // Sessions events are optional.
@@ -159,6 +171,11 @@ async function init() {
     await loadDevices();
   }
 
+  // Observe the sentinel only after the first render has settled; otherwise
+  // content-visibility estimates can briefly make it look visible and trigger
+  // an unnecessary second page fetch.
+  window.setTimeout(setupHistoryObserver, 200);
+
   if (new URLSearchParams(location.search).get('settings') === '1') {
     openSettings();
     const url = new URL(location.href);
@@ -176,6 +193,7 @@ function cacheDom() {
     historyHeaderActions: document.getElementById('historyHeaderActions'),
     refreshActions: document.getElementById('refreshActions'),
     historyToolbar: document.getElementById('historyToolbar'),
+    rangeWrap: document.getElementById('rangeWrap'),
     searchField: document.getElementById('searchField'),
     searchInput: document.getElementById('searchInput'),
     searchClear: document.getElementById('searchClear'),
@@ -204,6 +222,7 @@ function cacheDom() {
     devicesMeta: document.getElementById('devicesMeta'),
     devicesList: document.getElementById('devicesList'),
     selectBtn: document.getElementById('selectBtn'),
+    exportBtn: document.getElementById('exportBtn'),
     clearBtn: document.getElementById('clearBtn'),
     refreshBtn: document.getElementById('refreshBtn'),
     bulkBar: document.getElementById('bulkBar'),
@@ -278,8 +297,20 @@ function toggleTheme() {
 function initFromUrl() {
   const params = new URLSearchParams(location.search);
   const requestedView = params.get('view');
-  state.view = VIEW_META[requestedView] ? requestedView : 'history';
+  state.view = Object.hasOwn(VIEW_META, requestedView) ? requestedView : 'history';
   state.welcome = params.get('welcome') === '1';
+
+  const range = params.get('range');
+  if (['all', 'hour', '24h', 'today', 'yesterday', '7d', '30d', 'custom'].includes(range)) {
+    state.range = range;
+    if (range === 'custom') {
+      const start = params.get('start');
+      const end = params.get('end');
+      if (/^\d{4}-\d{2}-\d{2}$/.test(start || '')) state.custom.start = start;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(end || '')) state.custom.end = end;
+      if (!state.custom.start && !state.custom.end) state.range = 'all';
+    }
+  }
 
   const query = params.get('q');
   if (query) {
@@ -289,12 +320,24 @@ function initFromUrl() {
 }
 
 function updateUrlState() {
-  const params = new URLSearchParams();
-  if (state.view !== 'history') params.set('view', state.view);
-  if (state.view === 'history' && state.query) params.set('q', state.query);
-  const queryString = params.toString();
-  const nextUrl = `${location.pathname}${queryString ? `?${queryString}` : ''}`;
-  window.history.replaceState(null, '', nextUrl);
+  const url = new URL(location.href);
+  if (state.view !== 'history') url.searchParams.set('view', state.view);
+  else url.searchParams.delete('view');
+  if (state.query) url.searchParams.set('q', state.query);
+  else url.searchParams.delete('q');
+
+  if (state.view === 'history' && state.range !== 'all') url.searchParams.set('range', state.range);
+  else url.searchParams.delete('range');
+  if (state.view === 'history' && state.range === 'custom') {
+    if (state.custom.start) url.searchParams.set('start', state.custom.start);
+    else url.searchParams.delete('start');
+    if (state.custom.end) url.searchParams.set('end', state.custom.end);
+    else url.searchParams.delete('end');
+  } else {
+    url.searchParams.delete('start');
+    url.searchParams.delete('end');
+  }
+  window.history.replaceState(null, '', `${url.pathname}${url.search}`);
 }
 
 function syncViewChrome() {
@@ -304,7 +347,9 @@ function syncViewChrome() {
   document.title = `${meta.documentTitle} · Edge 风格历史记录`;
   el.app.dataset.view = state.view;
 
-  el.historyToolbar.hidden = state.view !== 'history';
+  el.historyToolbar.hidden = false;
+  el.rangeWrap.hidden = state.view !== 'history';
+  el.resultCount.hidden = state.view !== 'history';
   el.historyHeaderActions.hidden = state.view !== 'history';
   el.refreshActions.hidden = state.view === 'history';
   el.historyView.hidden = state.view !== 'history';
@@ -324,6 +369,8 @@ function syncViewChrome() {
     if (state.selectMode) exitSelectMode();
   }
 
+  updateSearchPlaceholder();
+  updateSearchUI();
   updateRefreshButton();
   updateWelcomeVisibility();
 
@@ -337,14 +384,19 @@ function syncViewChrome() {
 }
 
 function switchView(view) {
-  if (!VIEW_META[view] || view === state.view) return;
+  if (!Object.hasOwn(VIEW_META, view) || view === state.view) return;
 
   if (state.view === 'history') state.historyScrollTop = el.content.scrollTop;
+  runSearch.cancel();
+  state.queries[state.view] = state.query;
   closeRangePopover();
   closeRowMenu();
   if (state.selectMode) exitSelectMode();
 
   state.view = view;
+  state.query = state.queries[view] || '';
+  el.searchInput.value = state.query;
+  updateSearchUI();
   syncViewChrome();
   updateUrlState();
 
@@ -353,12 +405,13 @@ function switchView(view) {
   });
 
   if (view === 'history') {
-    if (!state.loadedOnce) loadHistoryReset();
-    else window.requestAnimationFrame(ensureFill);
+    if (!state.loadedOnce || state.appliedQuery !== state.query) loadHistoryReset();
   } else if (view === 'closed') {
-    loadClosed(!state.closedLoaded);
+    // Always re-read sessions on entry: a tab may have been closed while the
+    // user was on the history view. Keep the old DOM visible while refreshing.
+    loadClosed(true);
   } else {
-    loadDevices(!state.devicesLoaded);
+    loadDevices(true);
   }
 }
 
@@ -392,7 +445,9 @@ function resetHistoryData() {
 async function loadHistoryReset() {
   if (state.view !== 'history') return;
   resetHistoryData();
+  state.collapsed.clear();
   state.loadedOnce = true;
+  state.appliedQuery = state.query;
   el.content.scrollTop = 0;
   state.historyScrollTop = 0;
   await loadHistoryMore();
@@ -403,9 +458,12 @@ async function loadHistoryMore() {
   if (!api?.history) return;
 
   const bounds = historyBounds();
+  // chrome.history.search treats endTime as exclusive. Using cursor - 1 skips
+  // every visit that shares the boundary millisecond (Chrome stores visit
+  // times with sub-millisecond precision), so pass the cursor unchanged.
   const endTime = state.cursor == null
     ? bounds.endTime
-    : Math.min(state.cursor - 1, bounds.endTime);
+    : Math.min(state.cursor + SEARCH_TIME_EPSILON, bounds.endTime);
 
   if (endTime < bounds.startTime) {
     state.exhausted = true;
@@ -416,9 +474,13 @@ async function loadHistoryMore() {
 
   const pageSize = currentPageSize();
   const requestId = ++state.requestId;
+  const newIdFloor = nextItemId;
+  const lastExistingTime = state.items.length ? state.items[state.items.length - 1].lastVisitTime : Infinity;
   state.loading = true;
   state.error = null;
-  renderHistory();
+  closeRowMenu();
+  if (state.items.length) renderFooter();
+  else renderHistory();
   updateResultCount();
 
   try {
@@ -442,6 +504,7 @@ async function loadHistoryMore() {
       oldest = Math.min(oldest, lastVisitTime);
 
       if (lastVisitTime < bounds.startTime || lastVisitTime > bounds.endTime) continue;
+      if (isOwnExtensionPage(raw.url)) continue;
       if (state.seen.has(raw.url)) continue;
 
       state.seen.add(raw.url);
@@ -474,10 +537,17 @@ async function loadHistoryMore() {
     console.error('Failed to load history', error);
   } finally {
     if (requestId === state.requestId) {
+      const appended = state.items.filter((item) => item._id >= newIdFloor);
+      const outOfOrder = appended.some((item) => item.lastVisitTime > lastExistingTime);
       state.loading = false;
-      renderHistory();
+
+      if (!state.items.length || outOfOrder || !el.historyList.querySelector('.history-group')) {
+        renderHistory();
+      } else {
+        if (appended.length) appendHistoryItems(appended);
+        renderFooter();
+      }
       updateResultCount();
-      window.requestAnimationFrame(ensureFill);
     }
   }
 }
@@ -485,15 +555,6 @@ async function loadHistoryMore() {
 function rebuildItemIndex() {
   itemIndex.clear();
   for (const item of state.items) itemIndex.set(item._id, item);
-}
-
-function ensureFill() {
-  if (state.view !== 'history' || state.loading || state.exhausted || state.error || !state.items.length) return;
-  if (el.historyView.hidden) return;
-
-  const sentinelRect = el.sentinel.getBoundingClientRect();
-  const contentRect = el.content.getBoundingClientRect();
-  if (sentinelRect.top < contentRect.bottom + 500) loadHistoryMore();
 }
 
 function setupHistoryObserver() {
@@ -536,8 +597,9 @@ function renderHistory() {
 
 function groupMarkup(group) {
   const collapsed = state.collapsed.has(group.key);
+  const estimatedHeight = collapsed ? 43 : group.items.length * 56 + 43;
   return `
-    <section class="history-group${collapsed ? ' is-collapsed' : ''}" data-group="${escapeHtml(group.key)}">
+    <section class="history-group${collapsed ? ' is-collapsed' : ''}" data-group="${escapeHtml(group.key)}" style="contain-intrinsic-size:auto ${estimatedHeight}px">
       <button class="group-head" type="button" data-action="toggle-group" data-group-key="${escapeHtml(group.key)}" aria-expanded="${String(!collapsed)}">
         <span class="group-chevron">${icon('chevron-down')}</span>
         <span class="group-title">${escapeHtml(group.label)}</span>
@@ -548,6 +610,30 @@ function groupMarkup(group) {
         ${group.items.map(rowMarkup).join('')}
       </div>
     </section>`;
+}
+
+function appendHistoryItems(items) {
+  if (!items.length) return;
+  if (!el.historyList.querySelector('.history-group')) {
+    renderHistory();
+    return;
+  }
+
+  for (const group of groupItemsByDate(items)) {
+    const existing = [...el.historyList.children].find((section) => section.dataset.group === group.key);
+    if (existing) {
+      const body = existing.querySelector('.group-body');
+      if (!body) continue;
+      body.insertAdjacentHTML('beforeend', group.items.map(rowMarkup).join(''));
+      const count = body.querySelectorAll('.history-row').length;
+      const countEl = existing.querySelector('.group-count');
+      if (countEl) countEl.textContent = `${formatCount(count)} 条`;
+      const collapsed = existing.classList.contains('is-collapsed');
+      existing.style.containIntrinsicSize = `auto ${collapsed ? 43 : count * 56 + 43}px`;
+    } else {
+      el.historyList.insertAdjacentHTML('beforeend', groupMarkup(group));
+    }
+  }
 }
 
 function rowMarkup(item) {
@@ -561,7 +647,7 @@ function rowMarkup(item) {
 
   return `
     <article class="history-row${selected ? ' is-selected' : ''}" data-id="${item._id}" role="listitem">
-      <label class="row-check" aria-label="选择这条记录">
+      <label class="row-check" aria-label="选择 ${escapeHtml(title)}">
         <input type="checkbox" data-role="check" ${selected ? 'checked' : ''}>
       </label>
       ${faviconMarkup(item.url, title, favicon)}
@@ -576,7 +662,7 @@ function rowMarkup(item) {
         ${visitChip}
         <time class="row-time" datetime="${new Date(item.lastVisitTime).toISOString()}" title="${escapeHtml(formatFullDate(item.lastVisitTime))}">${formatTime(item.lastVisitTime)}</time>
       </div>
-      <button class="icon-btn row-more" type="button" data-role="menu" aria-label="更多操作" aria-haspopup="menu" title="更多操作">${icon('more')}</button>
+      <button class="icon-btn row-more" type="button" data-role="menu" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false" title="更多操作">${icon('more')}</button>
     </article>`;
 }
 
@@ -639,36 +725,43 @@ function emptyHistoryMarkup() {
   });
 }
 
+function restoreFooterFocus(hadFocus) {
+  if (!hadFocus) return;
+  const target = el.listFooter.querySelector('[data-action="load-more"], [data-action="retry-history"]');
+  if (target) {
+    target.focus({ preventScroll: true });
+  } else {
+    el.listFooter.tabIndex = -1;
+    el.listFooter.focus({ preventScroll: true });
+  }
+}
+
 function renderFooter() {
   if (!el) return;
+  const hadFocus = el.listFooter.contains(document.activeElement);
+  let html = '';
+
   if (!state.items.length) {
-    el.listFooter.innerHTML = '';
-    return;
-  }
-
-  if (state.loading) {
-    el.listFooter.innerHTML = '<span class="spinner" aria-hidden="true"></span><span>正在加载更多…</span>';
-    return;
-  }
-
-  if (state.error) {
-    el.listFooter.innerHTML = `
+    html = '';
+  } else if (state.loading) {
+    html = '<span class="spinner" aria-hidden="true"></span><span>正在加载更多…</span>';
+  } else if (state.error) {
+    html = `
       ${icon('alert')}
       <span>加载失败：${escapeHtml(friendlyError(state.error))}</span>
       <button class="btn btn-quiet" type="button" data-action="retry-history">重试</button>`;
-    return;
-  }
-
-  if (state.exhausted) {
-    el.listFooter.innerHTML = `
+  } else if (state.exhausted) {
+    html = `
       <span class="end-mark" aria-hidden="true"></span>
       <span>已显示全部 ${formatCount(state.items.length)} 条记录</span>`;
-    return;
+  } else {
+    html = `
+      <span>继续滚动以加载更多</span>
+      <button class="btn btn-quiet" type="button" data-action="load-more">加载更多</button>`;
   }
 
-  el.listFooter.innerHTML = `
-    <span>继续滚动以加载更多</span>
-    <button class="btn btn-quiet" type="button" data-action="load-more">加载更多</button>`;
+  el.listFooter.innerHTML = html;
+  restoreFooterFocus(hadFocus);
 }
 
 function updateResultCount() {
@@ -688,10 +781,10 @@ function updateResultCount() {
 
 /* --------------------------------------------------------------- selection */
 
-function enterSelectMode() {
+function enterSelectMode({ keepSelection = false } = {}) {
   if (state.view !== 'history') return;
   state.selectMode = true;
-  state.selected.clear();
+  if (!keepSelection) state.selected.clear();
   el.app.classList.add('selecting');
   el.selectBtn.setAttribute('aria-pressed', 'true');
   el.selectBtn.querySelector('span').textContent = '完成';
@@ -791,14 +884,24 @@ async function deleteItemUrls(urls) {
   });
 
   if (deletedUrls.size) {
+    // Stop an in-flight "load more" from appending rows based on the old list.
+    state.requestId += 1;
+    state.loading = false;
     state.items = state.items.filter((item) => !deletedUrls.has(item.url));
     state.seen = new Set(state.items.map((item) => item.url));
     rebuildItemIndex();
     state.selected.clear();
-    renderHistory();
-    updateResultCount();
-    updateBulkBar();
-    window.requestAnimationFrame(ensureFill);
+
+    if (!state.items.length) {
+      // The visible page can be emptied while older pages still exist. Reload
+      // from the current query/filter instead of declaring the history empty.
+      state.loadedOnce = true;
+      await loadHistoryReset();
+    } else {
+      renderHistory();
+      updateResultCount();
+      updateBulkBar();
+    }
   }
 
   return deletedUrls.size;
@@ -844,6 +947,7 @@ function openRowMenu(id, anchor) {
 
   state.menuItemId = id;
   state.menuAnchor = anchor;
+  anchor.setAttribute('aria-expanded', 'true');
   el.rowMenu.hidden = false;
   el.rowMenu.style.left = '0px';
   el.rowMenu.style.top = '0px';
@@ -863,6 +967,7 @@ function openRowMenu(id, anchor) {
 function closeRowMenu({ restoreFocus = false } = {}) {
   if (!el || el.rowMenu.hidden) return;
   const anchor = state.menuAnchor;
+  if (anchor?.isConnected) anchor.setAttribute('aria-expanded', 'false');
   el.rowMenu.hidden = true;
   el.rowMenu.innerHTML = '';
   state.menuItemId = null;
@@ -873,7 +978,7 @@ function closeRowMenu({ restoreFocus = false } = {}) {
 async function onRowMenuAction(action) {
   const item = itemIndex.get(state.menuItemId);
   if (!item) return;
-  closeRowMenu();
+  closeRowMenu({ restoreFocus: true });
 
   if (action === 'open') {
     openHistoryItem(item, { forceNewTab: true });
@@ -892,23 +997,36 @@ async function onRowMenuAction(action) {
   }
 
   if (action === 'delete') {
-    const title = normalizeTitle(item.title, item.url);
-    const confirmed = await showConfirm({
-      title: '删除此历史记录？',
-      message: `将删除“${title}”的全部访问记录（共 ${item.visitCount || 1} 次）。Chrome 以网址为单位保存历史，因此无法只删除其中一次访问。`,
-      note: '此操作无法撤销。',
-      confirmLabel: '删除'
-    });
-    if (!confirmed) return;
-    const deleted = await deleteItemUrls([item.url]);
-    showToast(deleted ? '已删除该记录' : '删除失败，请重试', deleted ? 'success' : 'error');
-    if (!state.items.length && state.selectMode) exitSelectMode();
+    await deleteItem(item);
     return;
   }
 
   if (action === 'delete-site') {
     await deleteSite(item);
   }
+}
+
+async function deleteItem(item) {
+  const title = normalizeTitle(item.title, item.url);
+  const confirmed = await showConfirm({
+    title: '删除此历史记录？',
+    message: `将删除“${title}”的全部访问记录（共 ${item.visitCount || 1} 次）。Chrome 以网址为单位保存历史，因此无法只删除其中一次访问。`,
+    note: '此操作无法撤销。',
+    confirmLabel: '删除'
+  });
+  if (!confirmed) return;
+
+  const index = state.items.findIndex((candidate) => candidate.url === item.url);
+  const deleted = await deleteItemUrls([item.url]);
+  showToast(deleted ? '已删除该记录' : '删除失败，请重试', deleted ? 'success' : 'error');
+  if (!deleted) return;
+
+  const next = state.items[Math.min(Math.max(index, 0), state.items.length - 1)];
+  const row = next
+    ? el.historyList.querySelector(`.history-row[data-id="${next._id}"]`)
+    : null;
+  (row?.querySelector('.row-more') || el.searchInput).focus();
+  if (!state.items.length && state.selectMode) exitSelectMode();
 }
 
 async function deleteSite(item) {
@@ -918,21 +1036,21 @@ async function deleteSite(item) {
 
   const confirmed = await showConfirm({
     title: '删除此站点的历史记录？',
-    message: `将删除 ${label} 下所有网址的全部浏览记录，包括当前页面中尚未显示的记录。Chrome 的历史记录以网址为单位，无法只删除某一次访问。`,
+    message: `将删除 ${label} 这个主机下所有网址的全部浏览记录（不含子域名），包括当前页面中尚未显示的记录。Chrome 的历史记录以网址为单位，无法只删除某一次访问。`,
     note: '此操作无法撤销，可能需要几秒钟。',
     confirmLabel: '全部删除'
   });
   if (!confirmed) return;
 
   showToast(`正在删除 ${label} 的历史记录…`, 'info', 5000);
-  let urls;
+  let collected = { urls: new Set(), complete: false };
   try {
-    urls = await collectSiteUrls(host);
+    collected = await collectSiteUrls(host);
   } catch (error) {
     console.error('Failed to collect site URLs', error);
-    urls = new Set();
   }
 
+  const urls = collected.urls;
   // Always include the rows already loaded, even if the search above failed.
   for (const local of state.items) {
     if (siteKeyOf(local.url) === host) urls.add(local.url);
@@ -940,10 +1058,13 @@ async function deleteSite(item) {
   urls.add(item.url);
 
   const deleted = await deleteItemUrls([...urls]);
-  showToast(
-    deleted ? `已删除 ${label} 的 ${formatCount(deleted)} 条记录` : '没有记录被删除，请重试',
-    deleted ? 'success' : 'error'
-  );
+  if (!deleted) {
+    showToast('没有记录被删除，请重试', 'error');
+  } else if (!collected.complete) {
+    showToast(`已删除 ${formatCount(deleted)} 条；部分站点记录未能收集，可能仍有剩余`, 'error', 5000);
+  } else {
+    showToast(`已删除 ${label} 的 ${formatCount(deleted)} 条记录`, 'success');
+  }
   if (!state.items.length && state.selectMode) exitSelectMode();
 }
 
@@ -957,23 +1078,35 @@ async function collectSiteUrls(host) {
     const query = {
       text: base,
       startTime: 0,
-      endTime: cursor == null ? Date.now() : cursor - 1,
+      // endTime is exclusive in chrome.history.search; include siblings with
+      // the exact same timestamp before moving on.
+      endTime: cursor == null ? Date.now() : Math.min(cursor + SEARCH_TIME_EPSILON, Date.now()),
       maxResults: 500
     };
-    const results = await api.history.search(query);
-    if (!Array.isArray(results) || !results.length) break;
+
+    let results;
+    try {
+      results = await api.history.search(query);
+    } catch (error) {
+      console.error('Failed to collect site URLs', error);
+      return { urls, complete: false };
+    }
+    if (!Array.isArray(results)) return { urls, complete: false };
+    if (!results.length) return { urls, complete: true };
 
     for (const result of results) {
       if (hosts.has(siteKeyOf(result.url))) urls.add(result.url);
     }
 
-    if (results.length < 500) break;
+    if (results.length < 500) return { urls, complete: true };
     const oldest = Math.min(...results.map((result) => Number(result.lastVisitTime) || 0));
-    if (!Number.isFinite(oldest) || (cursor != null && oldest >= cursor)) break;
+    if (!Number.isFinite(oldest) || (cursor != null && oldest >= cursor)) {
+      return { urls, complete: false };
+    }
     cursor = oldest;
   }
 
-  return urls;
+  return { urls, complete: false };
 }
 
 /* ------------------------------------------------------------------ visits */
@@ -1025,7 +1158,10 @@ function openVisits(item) {
 /* ------------------------------------------------------------------ closed */
 
 async function loadClosed(force = false) {
-  if (state.closedLoading) return;
+  if (state.closedLoading) {
+    if (force) state.closedDirty = true;
+    return;
+  }
   if (state.closedLoaded && !force) {
     renderClosed();
     return;
@@ -1033,30 +1169,56 @@ async function loadClosed(force = false) {
 
   state.closedLoading = true;
   state.closedError = null;
+  state.closedDirty = false;
   updateRefreshButton();
   renderClosed();
+  const requestId = ++state.closedRequestId;
 
   try {
     const sessions = await api.sessions.getRecentlyClosed({ maxResults: SESSION_LIMIT });
+    if (requestId !== state.closedRequestId) return;
     state.closed = Array.isArray(sessions) ? sessions.slice(0, SESSION_LIMIT) : [];
     state.closedLoaded = true;
   } catch (error) {
+    if (requestId !== state.closedRequestId) return;
     console.error('Failed to load recently closed sessions', error);
     state.closedError = error;
   } finally {
+    if (requestId !== state.closedRequestId) return;
     state.closedLoading = false;
     updateRefreshButton();
     if (state.view === 'closed') renderClosed();
+    if (state.closedDirty) {
+      state.closedDirty = false;
+      loadClosed(true);
+    }
   }
+}
+
+function sessionMatchesQuery(session, query) {
+  const q = query.toLocaleLowerCase();
+  const tabs = session.tab ? [session.tab] : (session.window?.tabs || []);
+  return tabs.some((tab) => `${tab.title || ''} ${tab.url || ''}`.toLocaleLowerCase().includes(q));
+}
+
+function filteredClosedSessions() {
+  const query = state.query.trim();
+  if (!query) return state.closed.map((session, index) => ({ session, index }));
+  return state.closed
+    .map((session, index) => ({ session, index }))
+    .filter(({ session }) => sessionMatchesQuery(session, query));
 }
 
 function renderClosed() {
   if (!el) return;
+  const sessions = filteredClosedSessions();
 
   if (state.closedLoading) {
     el.closedMeta.textContent = state.closedLoaded ? `正在刷新 · ${state.closed.length} 个关闭项` : '正在读取…';
   } else if (state.closedError) {
     el.closedMeta.textContent = '读取失败';
+  } else if (state.query) {
+    el.closedMeta.textContent = `${formatCount(sessions.length)} 个匹配项`;
   } else {
     el.closedMeta.textContent = `${formatCount(state.closed.length)} 个关闭项`;
   }
@@ -1087,7 +1249,17 @@ function renderClosed() {
     return;
   }
 
-  el.closedList.innerHTML = state.closed.map((session, index) => sessionMarkup(session, index)).join('');
+  if (!sessions.length) {
+    el.closedList.innerHTML = emptyMarkup({
+      iconName: 'search',
+      title: '没有匹配的关闭项',
+      text: `没有与“${state.query}”匹配的已关闭标签页。`,
+      actions: '<button class="btn btn-primary" type="button" data-action="clear-search">清除搜索</button>'
+    });
+    return;
+  }
+
+  el.closedList.innerHTML = sessions.map(({ session, index }) => sessionMarkup(session, index)).join('');
 }
 
 function sessionMarkup(session, index) {
@@ -1101,8 +1273,8 @@ function sessionMarkup(session, index) {
         <div class="single-session">
           ${faviconMarkup(tab.url, title)}
           <div class="single-session-main">
-            <a class="single-session-title" href="${hrefFor(tab.url)}" data-open-url="${escapeHtml(tab.url)}">${escapeHtml(title)}</a>
-            <span class="single-session-url">${escapeHtml(displayUrl(tab.url))}</span>
+            <a class="single-session-title" href="${hrefFor(tab.url)}" data-open-url="${escapeHtml(tab.url)}">${highlight(title, state.query)}</a>
+            <span class="single-session-url">${highlight(displayUrl(tab.url), state.query)}</span>
           </div>
           <span class="single-session-time">${escapeHtml(time)}</span>
           <button class="btn btn-soft session-restore" type="button" data-action="restore" data-session-index="${index}">
@@ -1137,8 +1309,8 @@ function sessionTabMarkup(tab) {
     <a class="session-tab" href="${hrefFor(tab.url)}" data-open-url="${escapeHtml(tab.url)}">
       ${faviconMarkup(tab.url, title)}
       <span class="session-tab-main">
-        <span class="session-tab-title">${escapeHtml(title)}</span>
-        <span class="session-tab-url">${escapeHtml(displayUrl(tab.url))}</span>
+        <span class="session-tab-title">${highlight(title, state.query)}</span>
+        <span class="session-tab-url">${highlight(displayUrl(tab.url), state.query)}</span>
       </span>
       <span class="session-tab-open">${icon('external')}</span>
     </a>`;
@@ -1157,6 +1329,19 @@ async function restoreSession(index) {
   try {
     if (sessionId != null) await api.sessions.restore(sessionId);
     else await api.sessions.restore();
+
+    state.closedRequestId += 1;
+    state.closedLoading = false;
+    state.closedDirty = false;
+    if (sessionId != null) {
+      state.closed = state.closed.filter((candidate) =>
+        (candidate.tab?.sessionId ?? candidate.window?.sessionId) !== sessionId
+      );
+    }
+    state.closedLoaded = true;
+    renderClosed();
+    updateRefreshButton();
+
     showToast(session.window ? '已恢复窗口' : '已恢复标签页', 'success');
     await loadClosed(true);
   } catch (error) {
@@ -1197,9 +1382,30 @@ async function loadDevices(force = false) {
   }
 }
 
+function tabMatchesQuery(tab, query) {
+  return `${tab.title || ''} ${tab.url || ''}`.toLocaleLowerCase().includes(query);
+}
+
+function filteredDevices(devices, query) {
+  const q = query.trim().toLocaleLowerCase();
+  if (!q) return devices;
+
+  return devices.map((device) => {
+    const sessions = (device.sessions || []).map((session) => {
+      if (session.tab) return tabMatchesQuery(session.tab, q) ? session : null;
+      const tabs = (session.window?.tabs || []).filter((tab) => tabMatchesQuery(tab, q));
+      if (!tabs.length) return null;
+      return { ...session, window: { ...session.window, tabs } };
+    }).filter(Boolean);
+
+    return sessions.length ? { ...device, sessions } : null;
+  }).filter(Boolean);
+}
+
 function renderDevices() {
   if (!el) return;
-  const totalTabs = countDeviceTabs(state.devices);
+  const devices = filteredDevices(state.devices, state.query);
+  const totalTabs = countDeviceTabs(devices);
 
   if (state.devicesLoading) {
     el.devicesMeta.textContent = state.devicesLoaded
@@ -1207,6 +1413,8 @@ function renderDevices() {
       : '正在读取…';
   } else if (state.devicesError) {
     el.devicesMeta.textContent = '读取失败';
+  } else if (state.query) {
+    el.devicesMeta.textContent = `${formatCount(devices.length)} 台设备 · ${formatCount(totalTabs)} 个匹配标签页`;
   } else if (state.devices.length) {
     el.devicesMeta.textContent = `${formatCount(state.devices.length)} 台设备 · ${formatCount(totalTabs)} 个标签页`;
   } else {
@@ -1241,13 +1449,24 @@ function renderDevices() {
           <div class="sync-step"><span class="sync-step-num">3</span><span>在手机或其他电脑上保持 Chrome 打开，然后点击刷新。</span></div>
         </div>
         <div class="empty-actions">
+          <button class="btn btn-primary" type="button" data-action="open-sync-settings">打开 Chrome 同步设置</button>
           <button class="btn btn-quiet" type="button" data-action="refresh-devices">刷新</button>
         </div>
       </div>`;
     return;
   }
 
-  el.devicesList.innerHTML = state.devices.map(deviceMarkup).join('');
+  if (!devices.length) {
+    el.devicesList.innerHTML = emptyMarkup({
+      iconName: 'search',
+      title: '没有匹配的标签页',
+      text: `没有与“${state.query}”匹配的其他设备标签页。`,
+      actions: '<button class="btn btn-primary" type="button" data-action="clear-search">清除搜索</button>'
+    });
+    return;
+  }
+
+  el.devicesList.innerHTML = devices.map(deviceMarkup).join('');
 }
 
 function deviceMarkup(device) {
@@ -1288,8 +1507,8 @@ function deviceSessionMarkup(session) {
             <a class="device-tab" href="${hrefFor(tab.url)}" data-open-url="${escapeHtml(tab.url)}">
               ${faviconMarkup(tab.url, title)}
               <span class="device-tab-main">
-                <span class="device-tab-title">${escapeHtml(title)}</span>
-                <span class="device-tab-url">${escapeHtml(displayUrl(tab.url))}</span>
+                <span class="device-tab-title">${highlight(title, state.query)}</span>
+                <span class="device-tab-url">${highlight(displayUrl(tab.url), state.query)}</span>
               </span>
               <span class="device-tab-open">${icon('arrow-up-right')}</span>
             </a>`;
@@ -1318,46 +1537,74 @@ function deviceIcon(name) {
 /* --------------------------------------------------------------- welcome */
 
 function reloadAfterQueryChange() {
+  state.queries[state.view] = state.query;
+  updateUrlState();
   if (state.view === 'history') loadHistoryReset();
-  else state.loadedOnce = false;
+  else if (state.view === 'closed') renderClosed();
+  else renderDevices();
+}
+
+function switchToHistory({ focus = false } = {}) {
+  if (state.view !== 'history') {
+    state.queries[state.view] = state.query;
+    state.view = 'history';
+    state.query = state.queries.history || '';
+    el.searchInput.value = state.query;
+    updateSearchUI();
+    syncViewChrome();
+    updateUrlState();
+    window.requestAnimationFrame(() => {
+      el.content.scrollTop = state.historyScrollTop || 0;
+    });
+  }
+  if (!state.loadedOnce || state.appliedQuery !== state.query) loadHistoryReset();
+  if (focus) el.searchInput.focus();
 }
 
 function focusHistoryView() {
-  if (state.view === 'history') return;
-  state.view = 'history';
-  syncViewChrome();
-  updateUrlState();
-  window.requestAnimationFrame(() => {
-    el.content.scrollTop = 0;
-  });
+  switchToHistory();
 }
 
 function showAllHistory() {
   closeRangePopover();
   closeRowMenu();
+  if (state.view !== 'history') state.queries[state.view] = state.query;
+
+  state.view = 'history';
   state.query = '';
+  state.queries.history = '';
+  state.range = 'all';
+  state.custom = { start: '', end: '' };
   el.searchInput.value = '';
   runSearch.cancel();
   updateSearchUI();
-  state.range = 'all';
-  state.custom = { start: '', end: '' };
   updateRangeUI();
-  focusHistoryView();
+  syncViewChrome();
   updateUrlState();
+  window.requestAnimationFrame(() => {
+    el.content.scrollTop = 0;
+  });
   loadHistoryReset();
 }
 
-function searchFromExternal(query) {
+function searchFromExternal(query, range = 'all') {
   const value = String(query || '').trim();
+  const validRange = ['all', 'hour', '24h', 'today', 'yesterday', '7d', '30d'].includes(range) ? range : 'all';
+  state.queries[state.view] = state.query;
+  state.view = 'history';
   state.query = value;
+  state.queries.history = value;
+  state.range = validRange;
+  state.custom = { start: '', end: '' };
   el.searchInput.value = value;
   runSearch.cancel();
   updateSearchUI();
-  state.range = 'all';
-  state.custom = { start: '', end: '' };
   updateRangeUI();
-  focusHistoryView();
+  syncViewChrome();
   updateUrlState();
+  window.requestAnimationFrame(() => {
+    el.content.scrollTop = 0;
+  });
   loadHistoryReset();
 }
 
@@ -1368,7 +1615,8 @@ function bindRuntimeMessages() {
 
       if (message.action === 'settings') openSettings();
       else if (message.action === 'all') showAllHistory();
-      else if (message.action === 'search') searchFromExternal(message.query);
+      else if (message.action === 'search') searchFromExternal(message.query, message.range);
+      else if (message.action === 'range') searchFromExternal('', message.range);
       else if (message.action === 'history') focusHistoryView();
       else if (message.action === 'closed' || message.action === 'devices') switchView(message.action);
 
@@ -1394,12 +1642,45 @@ async function dismissWelcome() {
   window.history.replaceState(null, '', `${url.pathname}${url.search}`);
 }
 
+function visibleRowTitles() {
+  return [...el.historyList.querySelectorAll('.row-title')]
+    .filter((node) => node.offsetParent !== null);
+}
+
 /* --------------------------------------------------------------- search */
 
 function updateSearchUI() {
   const hasValue = Boolean(el.searchInput.value.trim());
   el.searchField.classList.toggle('has-value', hasValue);
   el.searchClear.hidden = !hasValue;
+}
+
+function updateSearchPlaceholder() {
+  const labels = {
+    history: '搜索历史记录（标题或网址）',
+    closed: '搜索最近关闭（标题或网址）',
+    devices: '搜索来自其他设备的标签页'
+  };
+  const label = labels[state.view] || labels.history;
+  el.searchInput.placeholder = label;
+  el.searchInput.setAttribute('aria-label', label);
+}
+
+function handleSearchInput() {
+  updateSearchUI();
+  if (state.view === 'history') {
+    runSearch();
+    return;
+  }
+
+  runSearch.cancel();
+  const value = el.searchInput.value.trim();
+  if (value === state.query) return;
+  state.query = value;
+  state.queries[state.view] = value;
+  updateUrlState();
+  if (state.view === 'closed') renderClosed();
+  else renderDevices();
 }
 
 function commitSearch() {
@@ -1473,7 +1754,7 @@ function closeRangePopover({ restoreFocus = false } = {}) {
 
 function fillCustomDates() {
   if (!el.startDate.value) {
-    el.startDate.value = state.custom.start || formatDateInput(Date.now() - 6 * DAY_MS);
+    el.startDate.value = state.custom.start || formatDateInput(addDays(Date.now(), -6));
   }
   if (!el.endDate.value) {
     el.endDate.value = state.custom.end || formatDateInput(Date.now());
@@ -1506,6 +1787,10 @@ function applyCustomRange() {
     showToast('开始日期不能晚于结束日期', 'error');
     return;
   }
+  if (startOfDay(endDate.getTime()) > startOfDay(Date.now())) {
+    showToast('不能选择未来的日期', 'error');
+    return;
+  }
   state.custom = { start, end };
   applyRange('custom', state.custom);
 }
@@ -1532,6 +1817,10 @@ function openClearDialog() {
       <label class="field-label">开始日期<input type="date" id="clearStart"></label>
       <label class="field-label">结束日期<input type="date" id="clearEnd"></label>
     </div>
+    <div class="clear-native">
+      <span>Cookie、缓存、下载记录等需要在 Chrome 的“清除浏览数据”中处理。</span>
+      <button class="btn btn-quiet" type="button" id="openClearSettings">打开 Chrome 清除浏览数据</button>
+    </div>
     <div class="modal-callout is-warning">
       ${icon('alert')}
       <span>历史记录清除后无法撤销。同步到其他设备的历史记录是否受影响，取决于 Chrome 的同步状态。</span>
@@ -1555,7 +1844,20 @@ function openClearDialog() {
       const start = modal.querySelector('#clearStart');
       const end = modal.querySelector('#clearEnd');
 
-      start.value = formatDateInput(Date.now() - 6 * DAY_MS);
+      modal.querySelector('#openClearSettings')?.addEventListener('click', async () => {
+        try {
+          await api.tabs.create({ url: 'chrome://settings/clearBrowserData' });
+        } catch (error) {
+          console.error('Failed to open Chrome clear browsing data', error);
+          const copied = await copyText('chrome://settings/clearBrowserData');
+          showToast(
+            copied ? '已复制地址，请在地址栏打开' : '请在地址栏打开 chrome://settings/clearBrowserData',
+            copied ? 'info' : 'error'
+          );
+        }
+      });
+
+      start.value = formatDateInput(addDays(Date.now(), -6));
       end.value = formatDateInput(Date.now());
 
       const syncAck = () => {
@@ -1586,10 +1888,18 @@ function openClearDialog() {
             showToast('开始日期不能晚于结束日期', 'error');
             return;
           }
+          if (startOfDay(endDate.getTime()) > startOfDay(Date.now())) {
+            showToast('不能选择未来的日期', 'error');
+            return;
+          }
           bounds = {
             startTime: startOfDay(startDate.getTime()),
-            endTime: Math.min(Date.now(), endOfDay(endDate.getTime()))
+            endTime: Math.min(Date.now(), startOfNextDay(endDate.getTime()))
           };
+          if (bounds.startTime >= bounds.endTime) {
+            showToast('此范围内没有可清除的历史记录', 'info');
+            return;
+          }
         } else if (range !== 'all') {
           bounds = clearRangeBounds(range);
         }
@@ -1617,20 +1927,180 @@ function openClearDialog() {
 }
 
 function clearRangeBounds(range) {
-  const now = Date.now();
-  if (range === 'hour') {
-    return { startTime: now - 60 * 60 * 1000, endTime: now };
+  if (['hour', 'today', '7d', '30d'].includes(range)) {
+    return getRangeBounds(range);
   }
-  if (range === 'today') {
-    return { startTime: startOfDay(now), endTime: now };
+  return { startTime: 0, endTime: Date.now() };
+}
+
+/* ------------------------------------------------------------------ export */
+
+function openExportDialog() {
+  closeRowMenu();
+  closeRangePopover();
+
+  const body = `
+    <p>把浏览历史导出到本地文件。文件只包含标题、网址、访问次数和最后访问时间，不包含 Cookie、缓存、密码或下载记录。</p>
+    <div class="export-options">
+      <label class="field-label"><span>导出范围</span>
+        <select id="exportScope">
+          <option value="all" selected>全部历史</option>
+          <option value="current">当前搜索 / 时间筛选</option>
+        </select>
+      </label>
+      <label class="field-label"><span>文件格式</span>
+        <select id="exportFormat">
+          <option value="csv" selected>CSV（Excel 可打开）</option>
+          <option value="json">JSON</option>
+        </select>
+      </label>
+    </div>
+    <div class="modal-callout is-warning">
+      ${icon('alert')}
+      <span>导出的文件可能包含敏感浏览记录，请自行妥善保管。</span>
+    </div>`;
+
+  openModal({
+    title: '导出浏览数据',
+    bodyHtml: body,
+    footerHtml: `
+      <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
+      <button class="btn btn-primary" type="button" id="exportConfirm">导出</button>`,
+    onMount(modal) {
+      const scopeSelect = modal.querySelector('#exportScope');
+      const formatSelect = modal.querySelector('#exportFormat');
+      const confirm = modal.querySelector('#exportConfirm');
+
+      confirm.addEventListener('click', async () => {
+        const scope = scopeSelect.value;
+        const format = formatSelect.value;
+        confirm.disabled = true;
+        confirm.textContent = '正在导出…';
+
+        try {
+          const items = await collectExportItems(scope, (count) => {
+            confirm.textContent = `正在导出… ${formatCount(count)} 条`;
+          });
+          if (!items.length) {
+            showToast('没有可导出的历史记录', 'error');
+            confirm.disabled = false;
+            confirm.textContent = '导出';
+            return;
+          }
+          downloadExport(items, format, scope);
+          closeModal();
+          showToast(`已导出 ${formatCount(items.length)} 条历史记录`, 'success');
+        } catch (error) {
+          console.error('Failed to export history', error);
+          showToast(`导出失败：${friendlyError(error)}`, 'error');
+          confirm.disabled = false;
+          confirm.textContent = '导出';
+        }
+      });
+    }
+  });
+}
+
+async function collectExportItems(scope = 'all', onProgress) {
+  if (!api?.history) return [];
+  const bounds = scope === 'current' ? historyBounds() : { startTime: 0, endTime: Date.now() };
+  const text = scope === 'current' ? state.query.trim() : '';
+  const seen = new Set();
+  const items = [];
+  let cursor = null;
+
+  for (let page = 0; page < 200; page += 1) {
+    const endTime = cursor == null ? bounds.endTime : Math.min(cursor + SEARCH_TIME_EPSILON, bounds.endTime);
+    if (endTime <= bounds.startTime) break;
+
+    const results = await api.history.search({
+      text,
+      startTime: bounds.startTime,
+      endTime,
+      maxResults: 1000
+    });
+    if (!Array.isArray(results) || !results.length) break;
+
+    let oldest = Infinity;
+    for (const raw of results) {
+      if (!raw?.url) continue;
+      const lastVisitTime = Number(raw.lastVisitTime) || 0;
+      oldest = Math.min(oldest, lastVisitTime);
+      if (lastVisitTime < bounds.startTime || lastVisitTime > bounds.endTime) continue;
+      if (isOwnExtensionPage(raw.url)) continue;
+      if (seen.has(raw.url)) continue;
+      seen.add(raw.url);
+      items.push({
+        ...raw,
+        title: normalizeTitle(raw.title, raw.url),
+        lastVisitTime,
+        visitCount: Number(raw.visitCount) || 1
+      });
+    }
+
+    onProgress?.(items.length);
+    if (results.length < 1000) break;
+    if (!Number.isFinite(oldest) || oldest <= bounds.startTime) break;
+    if (cursor != null && oldest >= cursor) break;
+    cursor = oldest;
   }
-  if (range === '7d') {
-    return { startTime: startOfDay(now) - 6 * DAY_MS, endTime: now };
+
+  items.sort((a, b) => b.lastVisitTime - a.lastVisitTime);
+  return items;
+}
+
+function downloadExport(items, format, scope) {
+  const date = formatDateInput(Date.now());
+  const scopeLabel = scope === 'current' ? '当前筛选' : '全部历史';
+  const filename = `edge-history-${date}.${format}`;
+
+  let content;
+  let mime;
+  if (format === 'json') {
+    content = JSON.stringify({
+      exportedAt: new Date().toISOString(),
+      scope: scopeLabel,
+      count: items.length,
+      items: items.map((item) => ({
+        title: item.title,
+        url: item.url,
+        visitCount: item.visitCount,
+        lastVisitTime: new Date(item.lastVisitTime).toISOString(),
+        lastVisitTimeMs: item.lastVisitTime
+      }))
+    }, null, 2);
+    mime = 'application/json;charset=utf-8';
+  } else {
+    const rows = [
+      ['标题', '网址', '访问次数', '最后访问时间'].map(csvCell).join(','),
+      ...items.map((item) => [
+        item.title,
+        item.url,
+        item.visitCount,
+        new Date(item.lastVisitTime).toISOString()
+      ].map(csvCell).join(','))
+    ];
+    content = `\uFEFF${rows.join('\r\n')}\r\n`;
+    mime = 'text/csv;charset=utf-8';
   }
-  if (range === '30d') {
-    return { startTime: startOfDay(now) - 29 * DAY_MS, endTime: now };
-  }
-  return { startTime: 0, endTime: now };
+
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
+}
+
+function csvCell(value) {
+  let text = String(value ?? '');
+  // Prevent spreadsheet formula injection in titles that start with = + - @.
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 /* ---------------------------------------------------------------- settings */
@@ -1733,7 +2203,7 @@ function openSettings() {
 
       modal.querySelector('#settingsClear')?.addEventListener('click', () => {
         closeModal();
-        window.setTimeout(() => openClearDialog(), 180);
+        openClearDialog();
       });
 
       modal.querySelector('#copyShortcutPath')?.addEventListener('click', async () => {
@@ -1875,6 +2345,7 @@ function bindEvents() {
   el.settingsBtn.addEventListener('click', openSettings);
 
   el.selectBtn.addEventListener('click', toggleSelectMode);
+  el.exportBtn.addEventListener('click', openExportDialog);
   el.clearBtn.addEventListener('click', openClearDialog);
   el.refreshBtn.addEventListener('click', () => {
     if (state.view === 'closed') loadClosed(true);
@@ -1883,25 +2354,18 @@ function bindEvents() {
 
   el.searchInput.addEventListener('input', (event) => {
     if (event.isComposing) return;
-    updateSearchUI();
-    runSearch();
+    handleSearchInput();
   });
-  el.searchInput.addEventListener('compositionend', () => {
-    updateSearchUI();
-    runSearch();
-  });
-  el.searchInput.addEventListener('search', () => {
-    updateSearchUI();
-    runSearch();
-  });
+  el.searchInput.addEventListener('compositionend', handleSearchInput);
+  el.searchInput.addEventListener('search', handleSearchInput);
   el.searchInput.addEventListener('keydown', (event) => {
     if (event.isComposing || event.keyCode === 229) return;
 
     if (event.key === 'Enter') {
       event.preventDefault();
       const changed = commitSearchNow();
-      if (!changed) {
-        el.historyList.querySelector('.row-title')?.click();
+      if (!changed && state.view === 'history') {
+        visibleRowTitles()[0]?.click();
       }
       return;
     }
@@ -1914,7 +2378,14 @@ function bindEvents() {
     }
 
     if (event.key === 'ArrowDown') {
-      const first = el.historyList.querySelector('.row-title');
+      const root = state.view === 'history'
+        ? el.historyList
+        : state.view === 'closed'
+          ? el.closedList
+          : el.devicesList;
+      const first = state.view === 'history'
+        ? visibleRowTitles()[0]
+        : root?.querySelector('a[href], [data-open-url]');
       if (first) {
         event.preventDefault();
         first.focus();
@@ -1964,6 +2435,26 @@ function bindEvents() {
     if (action) onRowMenuAction(action);
   });
 
+  el.rowMenu.addEventListener('keydown', (event) => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const items = [...el.rowMenu.querySelectorAll('.context-item')];
+    if (!items.length) return;
+    event.preventDefault();
+    const index = items.indexOf(document.activeElement);
+    let next;
+    if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = items.length - 1;
+    else if (event.key === 'ArrowDown') next = (index + 1) % items.length;
+    else next = (index - 1 + items.length) % items.length;
+    items[next].focus();
+  });
+
+  el.rowMenu.addEventListener('focusout', (event) => {
+    if (!el.rowMenu.hidden && !el.rowMenu.contains(event.relatedTarget)) {
+      closeRowMenu();
+    }
+  });
+
   el.modalLayer.addEventListener('click', (event) => {
     if (event.target.closest('[data-modal-close]')) {
       closeModal();
@@ -1984,6 +2475,14 @@ function bindEvents() {
   }, true);
 
   document.addEventListener('keydown', onDocumentKeydown);
+
+  document.addEventListener('focusin', (event) => {
+    if (!el.rowMenu.hidden
+      && !el.rowMenu.contains(event.target)
+      && !event.target.closest('[data-role="menu"]')) {
+      closeRowMenu();
+    }
+  });
 
   document.addEventListener('error', (event) => {
     const image = event.target;
@@ -2017,6 +2516,8 @@ function onHistoryClick(event) {
       group.classList.toggle('is-collapsed', collapsed);
       body.hidden = collapsed;
       actionButton.setAttribute('aria-expanded', String(!collapsed));
+      const count = body.querySelectorAll('.history-row').length;
+      group.style.containIntrinsicSize = `auto ${collapsed ? 43 : count * 56 + 43}px`;
       return;
     }
     if (action === 'clear-search') {
@@ -2076,7 +2577,9 @@ function onHistoryChange(event) {
   if (!checkbox) return;
   const row = checkbox.closest('.history-row');
   if (!row) return;
-  setSelection(Number(row.dataset.id), checkbox.checked);
+  const checked = checkbox.checked;
+  if (!state.selectMode) enterSelectMode({ keepSelection: true });
+  setSelection(Number(row.dataset.id), checked);
 }
 
 function onFooterClick(event) {
@@ -2087,6 +2590,12 @@ function onFooterClick(event) {
 }
 
 function onClosedClick(event) {
+  const clear = event.target.closest('[data-action="clear-search"]');
+  if (clear) {
+    clearSearch();
+    return;
+  }
+
   const refresh = event.target.closest('[data-action="refresh-closed"]');
   if (refresh) {
     loadClosed(true);
@@ -2106,7 +2615,28 @@ function onClosedClick(event) {
   }
 }
 
-function onDevicesClick(event) {
+async function onDevicesClick(event) {
+  const clear = event.target.closest('[data-action="clear-search"]');
+  if (clear) {
+    clearSearch();
+    return;
+  }
+
+  const sync = event.target.closest('[data-action="open-sync-settings"]');
+  if (sync) {
+    try {
+      await api.tabs.create({ url: 'chrome://settings/syncSetup' });
+    } catch (error) {
+      console.error('Failed to open Chrome sync settings', error);
+      const copied = await copyText('chrome://settings/syncSetup');
+      showToast(
+        copied ? '已复制同步设置地址，请在地址栏打开' : '请在地址栏打开 chrome://settings/syncSetup',
+        copied ? 'info' : 'error'
+      );
+    }
+    return;
+  }
+
   const refresh = event.target.closest('[data-action="refresh-devices"]');
   if (refresh) {
     loadDevices(true);
@@ -2157,7 +2687,6 @@ function onDocumentKeydown(event) {
 
   if (event.key === '/' && !isEditableTarget(event.target) && !event.metaKey && !event.ctrlKey && !event.altKey) {
     event.preventDefault();
-    if (state.view !== 'history') switchView('history');
     el.searchInput.focus();
     el.searchInput.select();
     return;
@@ -2186,7 +2715,7 @@ function onDocumentKeydown(event) {
   if ((event.key === 'ArrowDown' || event.key === 'ArrowUp')
     && !isEditableTarget(event.target)
     && !el.historyView.hidden) {
-    const titles = [...el.historyList.querySelectorAll('.row-title')];
+    const titles = visibleRowTitles();
     if (!titles.length) return;
     const index = titles.indexOf(document.activeElement);
     if (index === -1) return;

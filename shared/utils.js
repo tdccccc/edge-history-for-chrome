@@ -36,6 +36,21 @@ export function isDemo() {
   return Boolean(globalThis.__demoChrome);
 }
 
+/**
+ * Chrome records visits to extension pages as ordinary history entries. Without
+ * this guard the history UI would list (and search) its own pages, making the
+ * first rows of every visit look like browsing history.
+ */
+export function isOwnExtensionPage(url) {
+  if (isDemo()) return false;
+  try {
+    const base = getChromeApi().runtime.getURL('');
+    return base.startsWith('chrome-extension://') && String(url || '').startsWith(base);
+  } catch {
+    return false;
+  }
+}
+
 /* ------------------------------------------------------------------ text */
 
 export function escapeHtml(value) {
@@ -225,8 +240,23 @@ export function startOfDay(value = Date.now()) {
   return date.getTime();
 }
 
+export function startOfNextDay(value = Date.now()) {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() + 1);
+  return date.getTime();
+}
+
+export function addDays(value = Date.now(), days = 0) {
+  const date = new Date(value);
+  date.setDate(date.getDate() + days);
+  return date.getTime();
+}
+
 export function endOfDay(value = Date.now()) {
-  return startOfDay(value) + DAY_MS - 1;
+  // Inclusive end for display purposes; use startOfNextDay for exclusive
+  // chrome.history query bounds.
+  return startOfNextDay(value) - 1;
 }
 
 export function dateKey(value) {
@@ -266,7 +296,7 @@ export function formatDateHeader(value, now = Date.now()) {
   const today = startOfDay(now);
   const day = startOfDay(value);
   if (day === today) return '今天';
-  if (day === today - DAY_MS) return '昨天';
+  if (day === startOfDay(addDays(now, -1))) return '昨天';
 
   const sameYear = date.getFullYear() === new Date(now).getFullYear();
   const prefix = sameYear ? '' : `${date.getFullYear()}年`;
@@ -282,8 +312,8 @@ export function relativeTime(value, now = Date.now()) {
   const day = startOfDay(value);
   const today = startOfDay(now);
   if (day === today) return `今天 ${formatTime(value)}`;
-  if (day === today - DAY_MS) return `昨天 ${formatTime(value)}`;
-  if (day > today - 7 * DAY_MS) return `${WEEKDAYS[new Date(value).getDay()]} ${formatTime(value)}`;
+  if (day === startOfDay(addDays(now, -1))) return `昨天 ${formatTime(value)}`;
+  if (Math.round((today - day) / DAY_MS) < 7) return `${WEEKDAYS[new Date(value).getDay()]} ${formatTime(value)}`;
 
   const date = new Date(value);
   const sameYear = date.getFullYear() === new Date(now).getFullYear();
@@ -300,6 +330,8 @@ export function formatDateInput(value) {
 
 export function formatRangeLabel(range, custom = {}) {
   switch (range) {
+    case 'hour': return '最近 1 小时';
+    case '24h': return '最近 24 小时';
     case 'today': return '今天';
     case 'yesterday': return '昨天';
     case '7d': return '最近 7 天';
@@ -327,24 +359,26 @@ export function parseDateInput(value) {
 export function getRangeBounds(range, custom = {}, now = Date.now()) {
   const today = startOfDay(now);
   switch (range) {
+    case 'hour':
+      return { startTime: now - 60 * 60 * 1000, endTime: now };
+    case '24h':
+      return { startTime: now - 24 * 60 * 60 * 1000, endTime: now };
     case 'today':
       return { startTime: today, endTime: now };
     case 'yesterday':
-      return { startTime: today - DAY_MS, endTime: today - 1 };
+      return { startTime: startOfDay(addDays(now, -1)), endTime: today };
     case '7d':
-      return { startTime: today - 6 * DAY_MS, endTime: now };
+      return { startTime: startOfDay(addDays(now, -6)), endTime: now };
     case '30d':
-      return { startTime: today - 29 * DAY_MS, endTime: now };
+      return { startTime: startOfDay(addDays(now, -29)), endTime: now };
     case 'custom': {
       const start = parseDateInput(custom.start);
       const end = parseDateInput(custom.end);
       if (!start && !end) return { startTime: 0, endTime: now };
       const startTime = start ? start.getTime() : 0;
-      const endTime = Math.min(now, end ? endOfDay(end) : now);
-      return {
-        startTime: Math.min(startTime, endTime),
-        endTime: Math.max(startTime, endTime)
-      };
+      const endTime = end ? Math.min(now, startOfNextDay(end)) : now;
+      if (startTime >= endTime) return { startTime: 0, endTime: 0 };
+      return { startTime, endTime };
     }
     default:
       return { startTime: 0, endTime: now };
@@ -367,8 +401,10 @@ export function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+const COUNT_FORMATTER = new Intl.NumberFormat('zh-CN');
+
 export function formatCount(value) {
-  return new Intl.NumberFormat('zh-CN').format(Number(value) || 0);
+  return COUNT_FORMATTER.format(Number(value) || 0);
 }
 
 export function pluralTabs(count) {

@@ -206,7 +206,7 @@ function createDemoChrome(params) {
   const api = {
     runtime: {
       getURL: (path) => path,
-      getManifest: () => ({ version: '1.0.0' }),
+      getManifest: () => ({ version: '1.2.0' }),
       getContexts: undefined
     },
     storage: {
@@ -227,7 +227,9 @@ function createDemoChrome(params) {
     history: {
       async search({ text = '', startTime = 0, endTime = Date.now(), maxResults = 100 } = {}) {
         return history
-          .filter((item) => item.lastVisitTime >= startTime && item.lastVisitTime <= endTime && matchText(item, text))
+          // Chrome treats endTime as exclusive; mirror that so pagination
+          // behaves the same in the offline demo.
+          .filter((item) => item.lastVisitTime >= startTime && item.lastVisitTime < endTime && matchText(item, text))
           .sort((a, b) => b.lastVisitTime - a.lastVisitTime)
           .slice(0, maxResults)
           .map((item) => ({ ...item }));
@@ -243,7 +245,8 @@ function createDemoChrome(params) {
         visitsByUrl.delete(url);
       },
       async deleteRange({ startTime, endTime }) {
-        history = history.filter((item) => item.lastVisitTime < startTime || item.lastVisitTime > endTime);
+        // Chrome treats endTime as exclusive.
+        history = history.filter((item) => item.lastVisitTime < startTime || item.lastVisitTime >= endTime);
       },
       async deleteAll() {
         history = [];

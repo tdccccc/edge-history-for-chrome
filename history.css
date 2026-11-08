@@ -800,6 +800,7 @@ kbd {
 
 .history-group {
   position: relative;
+  content-visibility: auto;
 }
 
 .group-head {
@@ -865,8 +866,10 @@ kbd {
 
 .history-row {
   position: relative;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 40px;
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto 32px;
+  grid-template-columns: 22px 36px minmax(0, 1fr) auto 32px;
   align-items: center;
   gap: 12px;
   min-height: 56px;
@@ -906,12 +909,11 @@ kbd {
 }
 
 .app.selecting .history-row {
-  grid-template-columns: 22px 36px minmax(0, 1fr) auto 32px;
   cursor: pointer;
 }
 
 .row-check {
-  display: none;
+  display: flex;
   align-items: center;
   justify-content: center;
   width: 22px;
@@ -1058,7 +1060,7 @@ kbd {
   width: 30px;
   height: 30px;
   border-radius: 6px;
-  opacity: 0;
+  opacity: 1;
   transition: opacity 0.12s var(--ease), background 0.12s var(--ease);
 }
 
@@ -2022,6 +2024,33 @@ body.modal-open .content {
   gap: 9px;
 }
 
+.clear-native {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.clear-native .btn {
+  flex: none;
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .clear-native {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 .check-line {
   display: flex;
   align-items: flex-start;
@@ -2553,12 +2582,8 @@ body.modal-open .content {
   }
 
   .history-row {
-    grid-template-columns: 30px minmax(0, 1fr) auto 28px;
+    grid-template-columns: 22px 30px minmax(0, 1fr) auto 28px;
     gap: 9px;
-  }
-
-  .app.selecting .history-row {
-    grid-template-columns: 20px 30px minmax(0, 1fr) auto 28px;
   }
 
   .favicon-tile {
@@ -2584,5 +2609,23 @@ body.modal-open .content {
 
   .modal-layer {
     padding: 12px;
+  }
+}
+
+/* --------------------------------------------------------------- export */
+
+.export-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+}
+
+.export-options .field-label {
+  margin-top: 14px;
+}
+
+@media (max-width: 560px) {
+  .export-options {
+    grid-template-columns: 1fr;
   }
 }
