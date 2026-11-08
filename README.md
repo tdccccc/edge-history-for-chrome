@@ -165,3 +165,7 @@ edge-history-for-chrome/
 ## 版本
 
 当前版本：`1.2.0`。个人使用的本地扩展；没有上传 Chrome Web Store。
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE)。
