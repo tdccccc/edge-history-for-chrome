@@ -317,7 +317,7 @@ function createDemoChrome(params) {
   const api = {
     runtime: {
       getURL: (path) => path,
-      getManifest: () => ({ version: '1.3.0' }),
+      getManifest: () => ({ version: '1.4.0' }),
       getContexts: undefined
     },
     storage: {
