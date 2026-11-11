@@ -3,6 +3,16 @@ import { mountIcons, icon } from './shared/icons.js';
 import { applyI18n, setLanguage, t } from './shared/i18n.js';
 import { nextHistoryPage } from './shared/pagination.js';
 import {
+  PENDING_DELETE_WINDOW_MS,
+  clearPendingDeletes,
+  createPendingDelete,
+  loadPendingDeletes,
+  partitionPendingDeletes,
+  pendingDeleteUrls,
+  restorePendingItems,
+  savePendingDeletes
+} from './shared/pending-delete.js';
+import {
   DEFAULT_SETTINGS,
   addDays,
   canOpenUrl,
@@ -118,6 +128,10 @@ let nextItemId = 1;
 const itemIndex = new Map();
 let historyObserver = null;
 
+// Pending (delayed) deletes, keyed by pending id. Each entry holds the
+// pending record, its execution timer and its undo toast element.
+const pendingDeletes = new Map();
+
 const runSearch = debounce(() => commitSearch(), 220);
 
 init().catch((error) => {
@@ -179,6 +193,11 @@ async function init() {
   } else {
     await loadDevices();
   }
+
+  // A delete confirmed in a previous session may still be waiting: execute
+  // it if its 30-second window has expired, otherwise cancel it (the rows
+  // were never actually deleted, so they load again normally).
+  await settlePendingDeletesOnStartup();
 
   // Observe the sentinel only after the first render has settled; otherwise
   // content-visibility estimates can briefly make it look visible and trigger
@@ -978,13 +997,182 @@ async function deleteSelected() {
   });
   if (!confirmed) return;
 
-  const urls = items.flatMap((item) => item.mergedUrls?.length ? item.mergedUrls : [item.url]);
-  const deleted = await deleteItemUrls(urls);
-  if (deleted > 0) showToast(t('count.deleted', { count: items.length }), 'success');
-  else showToast(t('history.deleteNothing'), 'error');
+  const scheduled = await schedulePendingDelete(items);
+  if (!scheduled) showToast(t('history.deleteNothing'), 'error');
   if (!state.items.length && state.selectMode) exitSelectMode();
 }
 
+/* ------------------------------------------- delayed delete (undo) ----- */
+
+// Delayed deletion: confirming a delete only hides the rows and queues them.
+// The real chrome.history.deleteUrl calls run in deleteItemUrls after a
+// 30-second undo window, or not at all if the user undoes. See
+// shared/pending-delete.js for the queue itself.
+//
+// The "clear history" dialog is intentionally out of scope: it deletes by
+// time range (deleteAll/deleteRange), not by URL, so it cannot be delayed
+// per row and keeps its own confirmation.
+function showUndoToast(pending, itemCount) {
+  if (!el?.toastRegion) return null;
+  const toast = document.createElement('div');
+  toast.className = 'toast is-info';
+  toast.innerHTML = `${icon('info')}<span>${escapeHtml(t('history.deletePending', { count: itemCount }))}</span>`;
+  const undoBtn = document.createElement('button');
+  undoBtn.className = 'toast-action';
+  undoBtn.type = 'button';
+  undoBtn.textContent = t('common.undo');
+  undoBtn.addEventListener('click', () => {
+    void cancelPendingDelete(pending.id);
+  });
+  toast.appendChild(undoBtn);
+  el.toastRegion.appendChild(toast);
+
+  while (el.toastRegion.children.length > 4) {
+    el.toastRegion.firstElementChild?.remove();
+  }
+
+  window.requestAnimationFrame(() => toast.classList.add('is-visible'));
+  return toast;
+}
+
+function removeToastElement(toast) {
+  if (!toast?.isConnected) return;
+  toast.classList.remove('is-visible');
+  window.setTimeout(() => toast.remove(), 220);
+}
+
+async function persistPendingDeletes() {
+  try {
+    await savePendingDeletes([...pendingDeletes.values()].map((entry) => entry.pending));
+  } catch {
+    // Persistence is best-effort; the in-memory queue still works.
+  }
+}
+
+async function schedulePendingDelete(items, { extraUrls = [] } = {}) {
+  const pendingUrls = pendingDeleteUrls([...pendingDeletes.values()].map((entry) => entry.pending));
+  const targets = (Array.isArray(items) ? items : []).filter((item) => {
+    const urls = item.mergedUrls?.length ? item.mergedUrls : [item.url];
+    return urls.length && !urls.some((url) => pendingUrls.has(url));
+  });
+  const extra = [...new Set(extraUrls.filter((url) => url && !pendingUrls.has(url)))];
+  if (!targets.length && !extra.length) return null;
+
+  const entries = targets.map((item) => ({
+    item,
+    index: state.items.findIndex((candidate) => candidate._id === item._id)
+  }));
+  const pending = createPendingDelete({
+    entries,
+    urls: [
+      ...targets.flatMap((item) => item.mergedUrls?.length ? item.mergedUrls : [item.url]),
+      ...extra
+    ],
+    now: Date.now()
+  });
+  if (!pending) return null;
+
+  // Hide the rows now; Chrome history itself is untouched until the timer fires.
+  const ids = new Set(targets.map((item) => item._id));
+  state.requestId += 1;
+  state.loading = false;
+  state.items = state.items.filter((item) => !ids.has(item._id));
+  for (const id of ids) state.selected.delete(id);
+  // Keep the pending URLs in `seen`: they still exist in Chrome history
+  // until the timer fires, so a "load more" must not re-fetch them back
+  // into the list while they are hidden.
+  state.seen = new Set([
+    ...state.items.flatMap((item) => item.mergedUrls || [item.url]),
+    ...pending.urls
+  ]);
+  rebuildItemIndex();
+  rebuildCanonicalIndex();
+  if (!state.items.length && state.selectMode) exitSelectMode();
+  renderHistory();
+  updateResultCount();
+  updateBulkBar();
+
+  const itemCount = Math.max(targets.length, 1);
+  const toast = showUndoToast(pending, itemCount);
+  const timerId = window.setTimeout(() => {
+    void executePendingDelete(pending.id);
+  }, PENDING_DELETE_WINDOW_MS);
+  pendingDeletes.set(pending.id, { pending, timerId, toast });
+  await persistPendingDeletes();
+  return pending;
+}
+
+async function executePendingDelete(id) {
+  const entry = pendingDeletes.get(id);
+  if (!entry) return 0;
+  pendingDeletes.delete(id);
+  window.clearTimeout(entry.timerId);
+  removeToastElement(entry.toast);
+  await persistPendingDeletes();
+
+  const deleted = await deleteItemUrls(entry.pending.urls);
+  if (deleted > 0) showToast(t('count.deleted', { count: deleted }), 'success');
+  else showToast(t('history.deleteNothing'), 'error');
+  return deleted;
+}
+
+async function cancelPendingDelete(id) {
+  const entry = pendingDeletes.get(id);
+  if (!entry) return false;
+  pendingDeletes.delete(id);
+  window.clearTimeout(entry.timerId);
+  removeToastElement(entry.toast);
+  await persistPendingDeletes();
+
+  state.items = restorePendingItems(state.items, entry.pending);
+  state.seen = new Set(state.items.flatMap((item) => item.mergedUrls || [item.url]));
+  rebuildItemIndex();
+  rebuildCanonicalIndex();
+  renderHistory();
+  updateResultCount();
+  updateBulkBar();
+  showToast(
+    t('history.deletePendingRestored', { count: entry.pending.items.length }),
+    'success'
+  );
+  return true;
+}
+
+async function settlePendingDeletesOnStartup() {
+  if (!api?.history) return;
+  let stored = [];
+  try {
+    stored = await loadPendingDeletes();
+  } catch {
+    return;
+  }
+  if (!stored.length) return;
+
+  const { due, remaining } = partitionPendingDeletes(stored, Date.now());
+  // The queue is settled either way: due entries run now, unexpired entries
+  // are cancelled (their rows were never deleted, so they load normally).
+  try {
+    await clearPendingDeletes();
+  } catch {
+    // A stale queue entry is harmless; the next open settles it again.
+  }
+
+  if (due.length) {
+    const urls = [...new Set(due.flatMap((pending) => pending.urls))];
+    const deleted = await deleteItemUrls(urls);
+    if (deleted > 0) showToast(t('count.deleted', { count: deleted }), 'success');
+  }
+  if (remaining.length) {
+    const count = remaining.reduce((total, pending) => total + Math.max(pending.items.length, 1), 0);
+    showToast(t('history.deletePendingCancelled', { count }), 'info', 5000);
+  }
+}
+
+/**
+ * Execute a real deletion against Chrome history. Only called after the
+ * undo window expires (executePendingDelete) or on startup for entries
+ * whose window already expired (settlePendingDeletesOnStartup).
+ */
 async function deleteItemUrls(urls) {
   const unique = [...new Set(urls.filter(Boolean))];
   if (!unique.length) return 0;
@@ -1138,9 +1326,11 @@ async function deleteItem(item) {
   if (!confirmed) return;
 
   const index = state.items.findIndex((candidate) => candidate._id === item._id);
-  const deleted = await deleteItemUrls(urls);
-  showToast(deleted ? t('history.deleteSuccess') : t('history.deleteFailed'), deleted ? 'success' : 'error');
-  if (!deleted) return;
+  const scheduled = await schedulePendingDelete([item]);
+  if (!scheduled) {
+    showToast(t('history.deleteFailed'), 'error');
+    return;
+  }
 
   const next = state.items[Math.min(Math.max(index, 0), state.items.length - 1)];
   const row = next
@@ -1178,13 +1368,16 @@ async function deleteSite(item) {
   }
   urls.add(item.url);
 
-  const deleted = await deleteItemUrls([...urls]);
-  if (!deleted) {
+  // Visible rows carry snapshots so they can be restored on undo. Collected
+  // URLs that are not loaded as rows have no snapshot to restore, but they
+  // still join the same pending delete, so undoing also spares them. If
+  // collection was incomplete, the uncollected URLs simply stay in history.
+  const visibleItems = state.items.filter((local) => siteKeyOf(local.url) === host);
+  const visibleUrls = new Set(visibleItems.flatMap((local) => local.mergedUrls?.length ? local.mergedUrls : [local.url]));
+  const extraUrls = [...urls].filter((url) => !visibleUrls.has(url));
+  const scheduled = await schedulePendingDelete(visibleItems, { extraUrls });
+  if (!scheduled) {
     showToast(t('history.deleteNothing'), 'error');
-  } else if (!collected.complete) {
-    showToast(t('history.deleteSitePartial', { count: deleted }), 'error', 5000);
-  } else {
-    showToast(t('history.deleteSiteSuccess', { count: deleted, label }), 'success');
   }
   if (!state.items.length && state.selectMode) exitSelectMode();
 }

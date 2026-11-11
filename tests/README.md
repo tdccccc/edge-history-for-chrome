@@ -31,8 +31,9 @@ node --test tests/unit/*.test.mjs
 ```
 
 The CDP runner exits `0` only when every test passes. The full suite currently
-has **17** tests and takes about 20 seconds on the development machine
-(5,000-row pagination is the slowest at about 8 seconds).
+has **18** tests and takes about 60 seconds on the development machine
+(5,000-row pagination is the slowest at about 8 seconds, and the delayed
+delete test waits out its 30-second undo window).
 
 Example summary:
 
@@ -41,10 +42,10 @@ Edge History CDP regression suite
 [1] demo history: 18 date groups / 36 rows, no page errors
     PASS (0.37s)
 ...
-[17] real action popup: 378px, no outer scroll, English and Chinese
+[18] real action popup: 378px, no outer scroll, English and Chinese
     PASS (0.82s)
 
-17 passed, 0 failed, 17 total (18.76s)
+18 passed, 0 failed, 18 total (60.93s)
 ```
 
 If the environment sets `NODE_USE_ENV_PROXY=1` (the DSH environment does), Node
@@ -76,6 +77,7 @@ NODE_USE_ENV_PROXY=0 node tests/run.mjs
 | 5,000 rows | The full page scrolls/loads all 5,000 rows with no page errors. |
 | duplicate merge | 8 URL variants merge into 3 rows with visit counts 10/2/3; turning merge off gives 8 rows; turning it back on gives 3. |
 | popup 300 tied | The popup's 60-row pagination also widens across a tied boundary and loads all 300 rows. |
+| delayed delete | Deleting a row hides it and shows a 30-second undo toast; undo restores the row and leaves demo history untouched, while letting the window expire really deletes the URL. |
 | export | CSV has BOM, CRLF, English headers and 36 data rows; JSON has count 36, 36 items and scope `All history`. |
 | extension i18n | Real extension empty/settings/clear/export/recently-closed/devices views in English contain no CJK; switching to Chinese updates the page immediately. |
 | storage | 1.2.0-style local settings migrate to `chrome.storage.sync`; a popup page follows language/theme changes live. |
@@ -95,6 +97,9 @@ NODE_USE_ENV_PROXY=0 node tests/run.mjs
   title + domain omnibox suggestions.
 - `dates.test.mjs`: America/New_York DST spring-forward/fall-back day lengths,
   local midnight, yesterday/7-day bounds and date headers.
+- `pending-delete.test.mjs`: pending-delete snapshots, 30-second expiry,
+  malformed-entry filtering, restore without duplication, and the
+  chrome.storage.local round-trip.
 
 ## Demo fixtures
 

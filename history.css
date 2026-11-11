@@ -2389,6 +2389,27 @@ body.modal-open .content {
   color: var(--accent);
 }
 
+.toast-action {
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.toast-action:hover {
+  background: var(--accent-soft-2);
+}
+
+.toast-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* ----------------------------------------------------------- animations */
 
 @keyframes spin {

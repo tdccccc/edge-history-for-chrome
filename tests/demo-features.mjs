@@ -406,6 +406,56 @@ export async function runDemoFeatures({ test, chrome, server }) {
     }
   }, { timeoutMs: 60000 });
 
+  await test('demo delayed delete: row hides, undo restores it, expiry really deletes it', async () => {
+    const { page, errors } = await openDemoPage(chrome, server, '/history.html?demo=1&lang=en');
+    try {
+      await page.waitForFunction("document.querySelectorAll('.history-row').length === 36");
+      const firstTitle = await page.evaluate("document.querySelector('.history-row .row-title')?.textContent || ''");
+      const firstUrl = await page.evaluate("document.querySelector('.history-row .row-title')?.getAttribute('href') || ''");
+
+      const deleteFirstRow = async () => {
+        await page.evaluate("document.querySelector('.history-row .row-more')?.click()");
+        await page.waitForFunction("document.querySelector('#rowMenu [data-menu-action=\"delete\"]')");
+        await page.evaluate("document.querySelector('#rowMenu [data-menu-action=\"delete\"]')?.click()");
+        await page.waitForFunction("document.querySelector('#confirmOk')");
+        await page.evaluate("document.querySelector('#confirmOk')?.click()");
+      };
+
+      // Undo inside the window: the row hides, then comes back, and the
+      // demo history still holds the URL (deleteUrl was never called).
+      await deleteFirstRow();
+      await page.waitForFunction("document.querySelectorAll('.history-row').length === 35");
+      await page.waitForFunction("document.querySelector('.toast-action')");
+      const undoText = await page.evaluate("document.querySelector('.toast')?.textContent || ''");
+      assert.match(undoText, /Will delete 1 item in 30 seconds/);
+      await page.evaluate("document.querySelector('.toast-action')?.click()");
+      await page.waitForFunction("document.querySelectorAll('.history-row').length === 36");
+      assert.equal(
+        await page.evaluate("document.querySelector('.history-row .row-title')?.textContent || ''"),
+        firstTitle
+      );
+
+      // Let the window expire: the row stays hidden, and the demo history
+      // itself no longer contains the URL (deleteUrl really ran). A reload
+      // cannot prove this in demo mode: demo data is rebuilt fresh on
+      // every load, so check the live in-memory history instead.
+      await deleteFirstRow();
+      await page.waitForFunction("document.querySelectorAll('.history-row').length === 35");
+      await delay(32000);
+      assert.equal(await page.evaluate("document.querySelectorAll('.history-row').length"), 35);
+      const remainingUrls = await page.evaluate(`(async () => {
+        const results = await window.__demoChrome.history.search({ text: '', startTime: 0, endTime: Date.now(), maxResults: 100 });
+        return results.map((entry) => entry.url);
+      })()`);
+      assert.equal(remainingUrls.length, 35);
+      assert.equal(remainingUrls.includes(firstUrl), false);
+      assert.deepEqual(errors.errors, []);
+    } finally {
+      errors.stop();
+      await page.close();
+    }
+  }, { timeoutMs: 90000 });
+
   await test('demo export: CSV/JSON counts, BOM, CRLF and headers', async () => {
     const downloads = mkdtempSync(join(tmpdir(), 'edge-history-downloads-'));
     const browser = await chrome.browser();
