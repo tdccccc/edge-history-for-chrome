@@ -2130,12 +2130,15 @@ async function maybeCheckAndShowUpdate() {
     if (isDemo()) {
       // Demo mode never hits the real network. ?update=1 seeds a fake
       // newer release so the banner can be exercised deterministically.
+      // An existing dismissal is preserved so re-running the check in the
+      // same session cannot resurrect a dismissed banner.
       if (new URLSearchParams(location.search).get('update') !== '1') return;
+      const existing = await loadUpdateState();
       await saveUpdateState({
         checkedAt: Date.now(),
         latestVersion: '9.9.9',
         latestUrl: `${UPDATE_CHECK_RELEASES_URL}/tag/v9.9.9`,
-        dismissedVersion: null
+        dismissedVersion: existing.dismissedVersion
       });
     } else {
       const result = await checkForUpdate({

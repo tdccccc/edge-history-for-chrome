@@ -31,7 +31,7 @@ node --test tests/unit/*.test.mjs
 ```
 
 The CDP runner exits `0` only when every test passes. The full suite currently
-has **18** tests and takes about 60 seconds on the development machine
+has **19** tests and takes about 60 seconds on the development machine
 (5,000-row pagination is the slowest at about 8 seconds, and the delayed
 delete test waits out its 30-second undo window).
 
@@ -42,10 +42,10 @@ Edge History CDP regression suite
 [1] demo history: 18 date groups / 36 rows, no page errors
     PASS (0.37s)
 ...
-[18] real action popup: 378px, no outer scroll, English and Chinese
-    PASS (0.82s)
+[19] real action popup: 378px, no outer scroll, English and Chinese
+    PASS (1.26s)
 
-18 passed, 0 failed, 18 total (60.93s)
+19 passed, 0 failed, 19 total (62.28s)
 ```
 
 If the environment sets `NODE_USE_ENV_PROXY=1` (the DSH environment does), Node
@@ -78,6 +78,7 @@ NODE_USE_ENV_PROXY=0 node tests/run.mjs
 | duplicate merge | 8 URL variants merge into 3 rows with visit counts 10/2/3; turning merge off gives 8 rows; turning it back on gives 3. |
 | popup 300 tied | The popup's 60-row pagination also widens across a tied boundary and loads all 300 rows. |
 | delayed delete | Deleting a row hides it and shows a 30-second undo toast; undo restores the row and leaves demo history untouched, while letting the window expire really deletes the URL. |
+| update reminder | `?update=1` seeds a fake 9.9.9 release: the banner shows the version and the release link, dismissing records the version in storage, and a plain demo load shows no banner. |
 | export | CSV has BOM, CRLF, English headers and 36 data rows; JSON has count 36, 36 items and scope `All history`. |
 | extension i18n | Real extension empty/settings/clear/export/recently-closed/devices views in English contain no CJK; switching to Chinese updates the page immediately. |
 | storage | 1.2.0-style local settings migrate to `chrome.storage.sync`; a popup page follows language/theme changes live. |
@@ -103,6 +104,9 @@ NODE_USE_ENV_PROXY=0 node tests/run.mjs
 - `virtual-list.test.mjs`: flattening date groups into fixed-height blocks,
   collapsed groups, window cuts with overscan, binary-search boundaries and
   row block lookup.
+- `update-check.test.mjs`: version parsing and comparison, latest-release
+  payload parsing, the once-a-day gate, dismissal, failure paths and the
+  chrome.storage.local round-trip.
 
 ## Demo fixtures
 
@@ -115,6 +119,7 @@ parameters add deterministic test data:
 | `duplicates=1` | 8 URL variants that merge into 3 rows (10/2/3 visits). |
 | `count=N` | N synthetic pages spread across recent days. |
 | `count=N&tie=1` | N pages split across the midnight boundary with tied `lastVisitTime` values. |
+| `update=1` | Seeds a fake 9.9.9 release so the update banner shows (demo only, no network). |
 
 The harness launches Chrome with `TZ=UTC` and `pinClock()` replaces
 `Date.now()` in demo pages with **2026-11-08T15:00:00Z** before any page script

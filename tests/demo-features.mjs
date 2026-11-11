@@ -533,6 +533,48 @@ export async function runDemoFeatures({ test, chrome, server }) {
     }
   }, { timeoutMs: 90000 });
 
+  await test('demo update reminder: banner shows the seeded release and dismiss hides it', async () => {
+    const { page, errors } = await openDemoPage(chrome, server, '/history.html?demo=1&update=1&lang=en');
+    try {
+      // The ?update=1 fixture seeds a fake 9.9.9 release in demo mode; no
+      // real network is involved. The banner shows the version and links
+      // to the release page.
+      await page.waitForFunction("!document.querySelector('#updateBanner').hidden");
+      const bannerText = await page.evaluate("document.querySelector('#updateBanner')?.textContent || ''");
+      assert.match(bannerText, /Update available: 9\.9\.9/);
+      assert.match(bannerText, /Download update/);
+      assert.equal(
+        await page.evaluate("document.querySelector('#updateBanner a')?.getAttribute('href') || ''"),
+        'https://github.com/tdccccc/edge-history-for-chrome/releases/tag/v9.9.9'
+      );
+      // Dismissing records the version in storage, so the banner stays
+      // hidden for it; a plain demo load without the fixture shows no
+      // banner at all.
+      await page.evaluate("document.querySelector('#dismissUpdate')?.click()");
+      await page.waitForFunction("document.querySelector('#updateBanner').hidden");
+      const stored = await page.evaluate(`(async () => {
+        const result = await window.__demoChrome.storage.local.get({ edgeHistoryUpdateCheck: null });
+        return result.edgeHistoryUpdateCheck;
+      })()`);
+      assert.equal(stored.dismissedVersion, '9.9.9');
+      assert.deepEqual(errors.errors, []);
+    } finally {
+      errors.stop();
+      await page.close();
+    }
+
+    const plain = await openDemoPage(chrome, server, '/history.html?demo=1&lang=en');
+    try {
+      await plain.page.waitForFunction("document.querySelector('#resultCount').textContent.includes('36 items')");
+      await delay(500);
+      assert.equal(await plain.page.evaluate("document.querySelector('#updateBanner').hidden"), true);
+      assert.deepEqual(plain.errors.errors, []);
+    } finally {
+      plain.errors.stop();
+      await plain.page.close();
+    }
+  });
+
   await test('demo export: CSV/JSON counts, BOM, CRLF and headers', async () => {
     const downloads = mkdtempSync(join(tmpdir(), 'edge-history-downloads-'));
     const browser = await chrome.browser();
