@@ -262,6 +262,13 @@ export const MESSAGES = {
     'welcome.dismiss': '知道了',
     'welcome.close': '关闭欢迎提示',
 
+    // update reminder
+    'update.title': '发现新版本 {version}',
+    'update.body': '从 GitHub Releases 下载最新版，解压后在 chrome://extensions 重新加载即可。',
+    'update.download': '下载新版本',
+    'update.dismiss': '不再提醒此版本',
+    'update.dismissAria': '关闭更新提示',
+
     // settings
     'settings.title': '设置',
     'settings.appearance': '外观',
@@ -669,6 +676,13 @@ export const MESSAGES = {
     'welcome.note': 'Chrome does not allow extensions to replace chrome://history or Ctrl+H. Pin this page for quick access.',
     'welcome.dismiss': 'Got it',
     'welcome.close': 'Close welcome banner',
+
+    // update reminder
+    'update.title': 'Update available: {version}',
+    'update.body': 'Download the latest release from GitHub, unzip it and reload it in chrome://extensions.',
+    'update.download': 'Download update',
+    'update.dismiss': 'Dismiss this version',
+    'update.dismissAria': 'Dismiss update notice',
 
     // settings
     'settings.title': 'Settings',

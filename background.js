@@ -12,6 +12,7 @@ import {
   escapeOmniboxXml,
   normalizeSearchQuery
 } from './shared/search.js';
+import { checkForUpdate, loadUpdateState, saveUpdateState } from './shared/update-check.js';
 
 const HISTORY_PAGE = 'history.html';
 const CONTEXT_MENU_ID = 'edge-history-search-selection';
@@ -114,6 +115,22 @@ function setOmniboxDefault() {
   }
 }
 
+/**
+ * Check GitHub Releases for a newer version, at most once a day. The
+ * history page reads the stored result and shows the banner; this runs
+ * here too so the check happens even before the page is opened. Silent
+ * on any failure, and never throws.
+ */
+async function maybeCheckForUpdate() {
+  try {
+    const currentVersion = chrome.runtime.getManifest().version;
+    const result = await checkForUpdate({ currentVersion, state: await loadUpdateState() });
+    if (result.checked) await saveUpdateState(result.state);
+  } catch {
+    // Update checks are best-effort.
+  }
+}
+
 chrome.contextMenus?.onClicked.addListener((info) => {
   if (info.menuItemId !== CONTEXT_MENU_ID) return;
   const query = normalizeSearchQuery(info.selectionText);
@@ -177,6 +194,8 @@ chrome.runtime.onInstalled.addListener(async ({ reason }) => {
   if (reason === 'install') {
     await openHistoryPage('?welcome=1');
   }
+
+  void maybeCheckForUpdate();
 });
 
 chrome.runtime.onStartup.addListener(() => {
@@ -184,6 +203,7 @@ chrome.runtime.onStartup.addListener(() => {
   // rebuilding them keeps updates and unclear storage states deterministic.
   ensureContextMenu();
   setOmniboxDefault();
+  void maybeCheckForUpdate();
 });
 
 chrome.commands.onCommand.addListener((command) => {

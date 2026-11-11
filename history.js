@@ -21,6 +21,14 @@ import {
   findRowBlockIndex
 } from './shared/virtual-list.js';
 import {
+  UPDATE_CHECK_RELEASES_URL,
+  checkForUpdate,
+  dismissUpdate,
+  loadUpdateState,
+  saveUpdateState,
+  shouldShowUpdate
+} from './shared/update-check.js';
+import {
   DEFAULT_SETTINGS,
   addDays,
   canOpenUrl,
@@ -222,6 +230,11 @@ async function init() {
   // were never actually deleted, so they load again normally).
   await settlePendingDeletesOnStartup();
 
+  // Check for a newer release (at most once a day) and show the update
+  // banner when one is available. Fire-and-forget: the check never blocks
+  // startup and any failure is silent.
+  void maybeCheckAndShowUpdate();
+
   if (new URLSearchParams(location.search).get('settings') === '1') {
     openSettings();
     const url = new URL(location.href);
@@ -254,6 +267,7 @@ function cacheDom() {
     applyRange: document.getElementById('applyRange'),
     resultCount: document.getElementById('resultCount'),
     welcomeBanner: document.getElementById('welcomeBanner'),
+    updateBanner: document.getElementById('updateBanner'),
     welcomeShortcut: document.getElementById('welcomeShortcut'),
     dismissWelcome: document.getElementById('dismissWelcome'),
     closeWelcome: document.getElementById('closeWelcome'),
@@ -468,6 +482,7 @@ function syncViewChrome() {
   updateSearchUI();
   updateRefreshButton();
   updateWelcomeVisibility();
+  updateUpdateBannerVisibility();
 
   const activeView = state.view === 'history'
     ? el.historyView
@@ -2101,6 +2116,70 @@ async function dismissWelcome() {
   const url = new URL(location.href);
   url.searchParams.delete('welcome');
   window.history.replaceState(null, '', `${url.pathname}${url.search}`);
+}
+
+/* ------------------------------------------------------- update reminder */
+
+// Whether the update banner was built for the current page load. The
+// banner itself is hidden on the closed/devices views, like the welcome
+// card, and re-shown when returning to the history view.
+let updateBannerShown = false;
+
+async function maybeCheckAndShowUpdate() {
+  try {
+    if (isDemo()) {
+      // Demo mode never hits the real network. ?update=1 seeds a fake
+      // newer release so the banner can be exercised deterministically.
+      if (new URLSearchParams(location.search).get('update') !== '1') return;
+      await saveUpdateState({
+        checkedAt: Date.now(),
+        latestVersion: '9.9.9',
+        latestUrl: `${UPDATE_CHECK_RELEASES_URL}/tag/v9.9.9`,
+        dismissedVersion: null
+      });
+    } else {
+      const result = await checkForUpdate({
+        currentVersion: getVersion(),
+        state: await loadUpdateState()
+      });
+      if (result.checked) await saveUpdateState(result.state);
+    }
+    await showUpdateBannerIfAvailable();
+  } catch {
+    // Update checks are best-effort and must never break the page.
+  }
+}
+
+async function showUpdateBannerIfAvailable() {
+  if (!el?.updateBanner || updateBannerShown) return;
+  const state = await loadUpdateState();
+  if (!shouldShowUpdate(state, getVersion())) return;
+  const version = state.latestVersion;
+  const url = state.latestUrl || UPDATE_CHECK_RELEASES_URL;
+  el.updateBanner.innerHTML = `
+    <div class="update-icon">${icon('refresh')}</div>
+    <div class="update-main">
+      <strong>${escapeHtml(t('update.title', { version }))}</strong>
+      <p>${escapeHtml(t('update.body'))}</p>
+    </div>
+    <div class="update-actions">
+      <a class="btn btn-primary" href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(t('update.download'))}</a>
+      <button class="icon-btn" type="button" id="dismissUpdate" aria-label="${escapeHtml(t('update.dismissAria'))}">${icon('close')}</button>
+    </div>`;
+  updateBannerShown = true;
+  updateUpdateBannerVisibility();
+  el.updateBanner.querySelector('#dismissUpdate')?.addEventListener('click', async () => {
+    const current = await loadUpdateState();
+    await saveUpdateState(dismissUpdate(current, version));
+    updateBannerShown = false;
+    el.updateBanner.hidden = true;
+    el.updateBanner.innerHTML = '';
+  });
+}
+
+function updateUpdateBannerVisibility() {
+  if (!el?.updateBanner) return;
+  el.updateBanner.hidden = !(updateBannerShown && state.view === 'history');
 }
 
 function visibleRowTitles() {
