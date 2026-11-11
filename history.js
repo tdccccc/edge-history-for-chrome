@@ -13,6 +13,14 @@ import {
   savePendingDeletes
 } from './shared/pending-delete.js';
 import {
+  VIRTUAL_HEADER_HEIGHT,
+  VIRTUAL_OVERSCAN_BLOCKS,
+  VIRTUAL_ROW_HEIGHT,
+  buildVirtualBlocks,
+  computeVirtualWindow,
+  findRowBlockIndex
+} from './shared/virtual-list.js';
+import {
   DEFAULT_SETTINGS,
   addDays,
   canOpenUrl,
@@ -126,7 +134,22 @@ const state = {
 let el = null;
 let nextItemId = 1;
 const itemIndex = new Map();
-let historyObserver = null;
+
+// Virtualized history list: state.items is flattened into fixed-height
+// blocks (date-group headers and rows) and only the viewport window plus
+// overscan is rendered, with spacers preserving the full scroll height.
+// Fetching still paginates with the cursor; this only changes rendering.
+const VIRTUAL_NEAR_END_PX = 1500;
+let virtualBlocks = [];
+let virtualOffsets = [];
+let virtualTotalHeight = 0;
+let virtualRowHeight = VIRTUAL_ROW_HEIGHT;
+let virtualHeaderHeight = VIRTUAL_HEADER_HEIGHT;
+let virtualWindowStart = -1;
+let virtualWindowEnd = -1;
+let virtualTopHeight = -1;
+let virtualBottomHeight = -1;
+let virtualScrollScheduled = false;
 
 // Pending (delayed) deletes, keyed by pending id. Each entry holds the
 // pending record, its execution timer and its undo toast element.
@@ -199,11 +222,6 @@ async function init() {
   // were never actually deleted, so they load again normally).
   await settlePendingDeletesOnStartup();
 
-  // Observe the sentinel only after the first render has settled; otherwise
-  // content-visibility estimates can briefly make it look visible and trigger
-  // an unnecessary second page fetch.
-  window.setTimeout(setupHistoryObserver, 200);
-
   if (new URLSearchParams(location.search).get('settings') === '1') {
     openSettings();
     const url = new URL(location.href);
@@ -241,7 +259,6 @@ function cacheDom() {
     closeWelcome: document.getElementById('closeWelcome'),
     historyView: document.getElementById('historyView'),
     historyList: document.getElementById('historyList'),
-    sentinel: document.getElementById('sentinel'),
     listFooter: document.getElementById('listFooter'),
     closedView: document.getElementById('closedView'),
     closedMeta: document.getElementById('closedMeta'),
@@ -645,6 +662,9 @@ async function loadHistoryMore() {
       }
       updateResultCount();
       refreshVisitChips(mergedIds);
+      // Sitting at the bottom of the list keeps loading further pages, the
+      // same way the old sentinel observer re-fired after each append.
+      maybeLoadMoreVirtual();
     }
   }
 }
@@ -685,16 +705,163 @@ function refreshVisitChips(ids) {
   }
 }
 
-function setupHistoryObserver() {
-  historyObserver?.disconnect();
-  historyObserver = new IntersectionObserver((entries) => {
-    if (state.error) return;
-    if (entries.some((entry) => entry.isIntersecting)) loadHistoryMore();
-  }, {
-    root: el.content,
-    rootMargin: '600px 0px'
+/* --------------------------------------------------------- virtual history list */
+
+function rebuildVirtualBlocks() {
+  const built = buildVirtualBlocks(groupItemsByDate(state.items), state.collapsed, {
+    rowHeight: virtualRowHeight,
+    headerHeight: virtualHeaderHeight
   });
-  historyObserver.observe(el.sentinel);
+  virtualBlocks = built.blocks;
+  virtualOffsets = built.offsets;
+  virtualTotalHeight = built.totalHeight;
+}
+
+function scheduleVirtualScrollUpdate() {
+  if (virtualScrollScheduled) return;
+  virtualScrollScheduled = true;
+  window.requestAnimationFrame(() => {
+    virtualScrollScheduled = false;
+    renderVirtualWindow();
+    maybeLoadMoreVirtual();
+  });
+}
+
+// Fetch the next page when scrolling comes within 1500px of the end of the
+// data loaded so far. This replaces the old IntersectionObserver sentinel;
+// the footer "load more" button stays as a manual fallback.
+function maybeLoadMoreVirtual() {
+  if (state.view !== 'history' || state.loading || state.exhausted || !state.loadedOnce) return;
+  if (state.error) return;
+  const remaining = virtualTotalHeight - (el.content.scrollTop + el.content.clientHeight);
+  if (remaining <= VIRTUAL_NEAR_END_PX) loadHistoryMore();
+}
+
+function renderVirtualWindow({ force = false } = {}) {
+  if (!el || !state.items.length) return;
+  const range = computeVirtualWindow(
+    { blocks: virtualBlocks, offsets: virtualOffsets, totalHeight: virtualTotalHeight },
+    el.content.scrollTop,
+    el.content.clientHeight,
+    VIRTUAL_OVERSCAN_BLOCKS
+  );
+  if (!force
+    && range.start === virtualWindowStart
+    && range.end === virtualWindowEnd
+    && range.topHeight === virtualTopHeight
+    && range.bottomHeight === virtualBottomHeight) {
+    return;
+  }
+  virtualWindowStart = range.start;
+  virtualWindowEnd = range.end;
+  virtualTopHeight = range.topHeight;
+  virtualBottomHeight = range.bottomHeight;
+
+  const focus = captureListFocus();
+  el.historyList.innerHTML = virtualWindowMarkup(range);
+  restoreListFocus(focus);
+  calibrateVirtualHeights();
+}
+
+function virtualWindowMarkup({ start, end, topHeight, bottomHeight }) {
+  let html = '';
+  if (topHeight > 0) {
+    html += `<div class="v-spacer" style="height:${topHeight}px" aria-hidden="true"></div>`;
+  }
+
+  let openGroup = null;
+  const closeGroup = () => {
+    if (openGroup) {
+      html += '</div></section>';
+      openGroup = null;
+    }
+  };
+
+  for (let index = start; index < end; index += 1) {
+    const block = virtualBlocks[index];
+    if (block.kind === 'header') {
+      closeGroup();
+      html += groupSectionOpen(block.group, false);
+      openGroup = block.group;
+    } else {
+      if (openGroup !== block.group) {
+        // The group's header sits above the window: render the section with
+        // a pinned header so the current date stays stuck to the top, the
+        // way the old sticky group-head behaved on a fully rendered list.
+        closeGroup();
+        html += groupSectionOpen(block.group, true);
+        openGroup = block.group;
+      }
+      html += rowMarkup(block.item);
+    }
+  }
+  closeGroup();
+
+  if (bottomHeight > 0) {
+    html += `<div class="v-spacer" style="height:${bottomHeight}px" aria-hidden="true"></div>`;
+  }
+  return html;
+}
+
+function groupSectionOpen(group, pinned) {
+  const collapsed = state.collapsed.has(group.key);
+  return `
+    <section class="history-group${collapsed ? ' is-collapsed' : ''}" data-group="${escapeHtml(group.key)}">
+      <button class="group-head${pinned ? ' is-pinned' : ''}" type="button" data-action="toggle-group" data-group-key="${escapeHtml(group.key)}" aria-expanded="${String(!collapsed)}">
+        <span class="group-chevron">${icon('chevron-down')}</span>
+        <span class="group-title">${escapeHtml(group.label)}</span>
+        <span class="group-count">${t('count.group', { count: group.items.length })}</span>
+        <span class="group-line" aria-hidden="true"></span>
+      </button>
+      <div class="group-body"${collapsed ? ' hidden' : ''}>`;
+}
+
+// Rows are single-line, so their height should match the 56px estimate, but
+// font scaling or a theme change can move it. Measure the first rendered row
+// and header after each window paint; if either differs, rebuild the block
+// offsets with the real heights and paint once more (the second measure
+// matches, so this cannot loop).
+function calibrateVirtualHeights() {
+  const row = el.historyList.querySelector('.history-row');
+  const head = el.historyList.querySelector('.group-head');
+  const rowHeight = row ? row.offsetHeight : 0;
+  const headerHeight = head ? head.offsetHeight : 0;
+  const rowChanged = rowHeight > 0 && rowHeight !== virtualRowHeight;
+  const headerChanged = headerHeight > 0 && headerHeight !== virtualHeaderHeight;
+  if (!rowChanged && !headerChanged) return;
+  if (rowChanged) virtualRowHeight = rowHeight;
+  if (headerChanged) virtualHeaderHeight = headerHeight;
+  el.historyList.style.setProperty('--v-header-height', `${virtualHeaderHeight}px`);
+  rebuildVirtualBlocks();
+  virtualWindowStart = -1;
+  renderVirtualWindow({ force: true });
+}
+
+// A window repaint replaces the list DOM, so remember a focused row or group
+// header and put focus back on its replacement afterwards.
+function captureListFocus() {
+  const active = document.activeElement;
+  if (!active || !el.historyList.contains(active)) return null;
+  const row = active.closest('.history-row');
+  if (row) {
+    const roleTarget = active.closest('[data-role]');
+    return { kind: 'row', id: Number(row.dataset.id), role: roleTarget?.dataset.role || 'open' };
+  }
+  const head = active.closest('.group-head');
+  if (head) return { kind: 'header', key: head.dataset.groupKey };
+  return null;
+}
+
+function restoreListFocus(saved) {
+  if (!saved) return;
+  let target = null;
+  if (saved.kind === 'row') {
+    const row = el.historyList.querySelector(`.history-row[data-id="${saved.id}"]`);
+    target = row?.querySelector(`[data-role="${saved.role}"]`) || row?.querySelector('.row-title');
+  } else {
+    target = el.historyList.querySelector(`.group-head[data-group-key="${CSS.escape(saved.key)}"]`);
+  }
+  target?.focus({ preventScroll: true });
 }
 
 /* --------------------------------------------------------- history render */
@@ -702,8 +869,10 @@ function setupHistoryObserver() {
 function renderHistory() {
   if (!el) return;
   closeRowMenu();
+  rebuildVirtualBlocks();
 
   if (state.error && !state.items.length) {
+    virtualWindowStart = -1;
     el.historyList.innerHTML = emptyMarkup({
       iconName: 'alert',
       error: true,
@@ -712,56 +881,25 @@ function renderHistory() {
       actions: `<button class="btn btn-primary" type="button" data-action="retry-history">${t('common.retry')}</button>`
     });
   } else if (!state.items.length && state.loading) {
+    virtualWindowStart = -1;
     el.historyList.innerHTML = skeletonMarkup();
   } else if (!state.items.length) {
+    virtualWindowStart = -1;
     el.historyList.innerHTML = emptyHistoryMarkup();
   } else {
-    const groups = groupItemsByDate(state.items);
-    el.historyList.innerHTML = groups.map(groupMarkup).join('');
+    renderVirtualWindow({ force: true });
   }
 
   renderFooter();
 }
 
-function groupMarkup(group) {
-  const collapsed = state.collapsed.has(group.key);
-  const estimatedHeight = collapsed ? 43 : group.items.length * 56 + 43;
-  return `
-    <section class="history-group${collapsed ? ' is-collapsed' : ''}" data-group="${escapeHtml(group.key)}" style="contain-intrinsic-size:auto ${estimatedHeight}px">
-      <button class="group-head" type="button" data-action="toggle-group" data-group-key="${escapeHtml(group.key)}" aria-expanded="${String(!collapsed)}">
-        <span class="group-chevron">${icon('chevron-down')}</span>
-        <span class="group-title">${escapeHtml(group.label)}</span>
-        <span class="group-count">${t('count.group', { count: group.items.length })}</span>
-        <span class="group-line" aria-hidden="true"></span>
-      </button>
-      <div class="group-body"${collapsed ? ' hidden' : ''}>
-        ${group.items.map(rowMarkup).join('')}
-      </div>
-    </section>`;
-}
-
 function appendHistoryItems(items) {
   if (!items.length) return;
-  if (!el.historyList.querySelector('.history-group')) {
-    renderHistory();
-    return;
-  }
-
-  for (const group of groupItemsByDate(items)) {
-    const existing = [...el.historyList.children].find((section) => section.dataset.group === group.key);
-    if (existing) {
-      const body = existing.querySelector('.group-body');
-      if (!body) continue;
-      body.insertAdjacentHTML('beforeend', group.items.map(rowMarkup).join(''));
-      const count = body.querySelectorAll('.history-row').length;
-      const countEl = existing.querySelector('.group-count');
-      if (countEl) countEl.textContent = t('count.group', { count });
-      const collapsed = existing.classList.contains('is-collapsed');
-      existing.style.containIntrinsicSize = `auto ${collapsed ? 43 : count * 56 + 43}px`;
-    } else {
-      el.historyList.insertAdjacentHTML('beforeend', groupMarkup(group));
-    }
-  }
+  // Appended pages extend the same flat block list; the window re-renders
+  // from the current scroll position, and only repaints when its range or
+  // spacer heights actually changed.
+  rebuildVirtualBlocks();
+  renderVirtualWindow();
 }
 
 function rowMarkup(item) {
@@ -1970,6 +2108,24 @@ function visibleRowTitles() {
     .filter((node) => node.offsetParent !== null);
 }
 
+// Move keyboard focus one row beyond the rendered window edge: scroll the
+// window by the distance to that row, then focus the row that entered it.
+function focusAdjacentRow(fromTitle, direction) {
+  const row = fromTitle.closest('.history-row');
+  if (!row) return;
+  const currentIndex = findRowBlockIndex(virtualBlocks, Number(row.dataset.id));
+  if (currentIndex === -1) return;
+  let nextIndex = currentIndex + direction;
+  while (nextIndex >= 0 && nextIndex < virtualBlocks.length && virtualBlocks[nextIndex].kind !== 'row') {
+    nextIndex += direction;
+  }
+  if (nextIndex < 0 || nextIndex >= virtualBlocks.length) return;
+  el.content.scrollTop += virtualOffsets[nextIndex] - virtualOffsets[currentIndex];
+  renderVirtualWindow({ force: true });
+  const nextRow = el.historyList.querySelector(`.history-row[data-id="${virtualBlocks[nextIndex].item._id}"]`);
+  nextRow?.querySelector('.row-title')?.focus({ preventScroll: true });
+}
+
 /* --------------------------------------------------------------- search */
 
 function updateSearchUI() {
@@ -2852,6 +3008,9 @@ function bindEvents() {
   el.content.addEventListener('scroll', () => {
     if (state.view === 'history') state.historyScrollTop = el.content.scrollTop;
     if (!el.rowMenu.hidden) closeRowMenu();
+    if (state.view === 'history' && state.loadedOnce && state.items.length) {
+      scheduleVirtualScrollUpdate();
+    }
   }, { passive: true });
 
   window.addEventListener('resize', () => {
@@ -2866,17 +3025,26 @@ function onHistoryClick(event) {
     const action = actionButton.dataset.action;
     if (action === 'toggle-group') {
       const key = actionButton.dataset.groupKey;
-      const group = actionButton.closest('.history-group');
-      const body = group?.querySelector('.group-body');
-      if (!group || !body) return;
       const collapsed = !state.collapsed.has(key);
       if (collapsed) state.collapsed.add(key);
       else state.collapsed.delete(key);
-      group.classList.toggle('is-collapsed', collapsed);
-      body.hidden = collapsed;
-      actionButton.setAttribute('aria-expanded', String(!collapsed));
-      const count = body.querySelectorAll('.history-row').length;
-      group.style.containIntrinsicSize = `auto ${collapsed ? 43 : count * 56 + 43}px`;
+      rebuildVirtualBlocks();
+      renderVirtualWindow({ force: true });
+      if (collapsed) {
+        // Collapsing removes the group's rows, so a pinned header would
+        // otherwise scroll out of view above the list; keep it on screen.
+        const headerIndex = virtualBlocks.findIndex(
+          (block) => block.kind === 'header' && block.group.key === key
+        );
+        if (headerIndex >= 0) {
+          const headerTop = virtualOffsets[headerIndex];
+          const scrollTop = el.content.scrollTop;
+          if (headerTop < scrollTop || headerTop > scrollTop + el.content.clientHeight - virtualHeaderHeight) {
+            el.content.scrollTop = headerTop;
+            renderVirtualWindow({ force: true });
+          }
+        }
+      }
       return;
     }
     if (action === 'clear-search') {
@@ -3079,9 +3247,17 @@ function onDocumentKeydown(event) {
     const index = titles.indexOf(document.activeElement);
     if (index === -1) return;
     event.preventDefault();
-    const next = event.key === 'ArrowDown'
-      ? titles[Math.min(titles.length - 1, index + 1)]
-      : titles[Math.max(0, index - 1)];
+    if (event.key === 'ArrowDown' && index === titles.length - 1) {
+      // The next row sits below the rendered window: shift the window to
+      // it and focus the row that scrolls into view.
+      focusAdjacentRow(document.activeElement, 1);
+      return;
+    }
+    if (event.key === 'ArrowUp' && index === 0) {
+      focusAdjacentRow(document.activeElement, -1);
+      return;
+    }
+    const next = event.key === 'ArrowDown' ? titles[index + 1] : titles[index - 1];
     next?.focus();
   }
 }

@@ -800,7 +800,12 @@ kbd {
 
 .history-group {
   position: relative;
-  content-visibility: auto;
+}
+
+/* Top/bottom spacers for the virtualized list: they stand in for the rows
+   above and below the rendered window so the list keeps its full height. */
+.v-spacer {
+  flex: none;
 }
 
 .group-head {
@@ -819,6 +824,14 @@ kbd {
 
 .group-head:hover .group-title {
   color: var(--accent);
+}
+
+/* A group whose header sits above the rendered window is re-rendered at the
+   top of its section so it stays stuck like before; the negative margin
+   keeps it from adding height to the window (its height is already counted
+   in the top spacer). --v-header-height is the measured header height. */
+.group-head.is-pinned {
+  margin-bottom: calc(-1 * var(--v-header-height, 43px));
 }
 
 .group-chevron {
@@ -866,8 +879,6 @@ kbd {
 
 .history-row {
   position: relative;
-  content-visibility: auto;
-  contain-intrinsic-size: auto 40px;
   display: grid;
   grid-template-columns: 22px 36px minmax(0, 1fr) auto 32px;
   align-items: center;
@@ -1211,10 +1222,6 @@ kbd {
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
-}
-
-.sentinel {
-  height: 1px;
 }
 
 /* ------------------------------------------------------- secondary views */

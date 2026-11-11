@@ -67,20 +67,27 @@ async function loadAllHistory(page, expected, {
     const state = await page.evaluate(`(() => {
       const scroller = document.querySelector(${JSON.stringify(container)});
       if (scroller) scroller.scrollTop = scroller.scrollHeight;
+      // The history list is virtualized: only the visible window is in the
+      // DOM, so the loaded total comes from the result count, not the rows.
+      // Pages without one (the popup) fall back to the rendered row count.
+      const countText = document.querySelector('#resultCount')?.textContent || '';
+      const countMatch = countText.match(/([\\d,]+)/);
+      const rows = document.querySelectorAll(${JSON.stringify(row)}).length;
       return {
-        rows: document.querySelectorAll(${JSON.stringify(row)}).length,
+        rows,
+        loaded: countMatch ? Number(countMatch[1].replace(/,/g, '')) : rows,
         hasButton: Boolean(document.querySelector(${JSON.stringify(button)})),
         footer: document.querySelector('#listFooter')?.textContent || ''
       };
     })()`);
 
-    if (state.rows >= expected) return state;
-    if (state.rows === lastRows) stalled += 1;
+    if (state.loaded >= expected) return state;
+    if (state.loaded === lastRows) stalled += 1;
     else stalled = 0;
-    lastRows = state.rows;
+    lastRows = state.loaded;
 
-    // Scrolling normally triggers the sentinel. If content-visibility makes the
-    // sentinel miss, the visible load-more button is the deterministic fallback.
+    // Scrolling normally triggers more loads. If the scroll position stops
+    // advancing them, the visible load-more button is the fallback.
     if (stalled >= 2 && state.hasButton) {
       await page.evaluate(`document.querySelector(${JSON.stringify(button)})?.click()`);
       stalled = 0;
@@ -306,21 +313,41 @@ export async function runDemoFeatures({ test, chrome, server }) {
     const { page, errors } = await openDemoPage(chrome, server, '/history.html?demo=1&count=300&tie=1&lang=en');
     try {
       await page.waitForFunction("document.querySelectorAll('.history-row').length > 0");
-      const initial = await page.evaluate("document.querySelectorAll('.history-row').length");
-      assert.equal(initial, 100, 'first page should contain 100 rows');
+      // First page loads 100 items; the list is virtualized, so only the
+      // visible window is in the DOM and the total comes from the counter.
+      const initial = await page.evaluate(`({
+        rows: document.querySelectorAll('.history-row').length,
+        count: document.querySelector('#resultCount').textContent
+      })`);
+      assert.ok(initial.rows > 0 && initial.rows <= 120, `first window should hold about 100 rows, got ${initial.rows}`);
+      assert.match(initial.count, /100 loaded/);
       await loadAllHistory(page, 300);
       const result = await page.evaluate(`({
         rows: document.querySelectorAll('.history-row').length,
-        groups: [...document.querySelectorAll('.group-title')].map((node) => node.textContent),
-        groupCounts: [...document.querySelectorAll('.group-count')].map((node) => node.textContent),
-        uniqueTitles: new Set([...document.querySelectorAll('.row-title')].map((node) => node.textContent)).size,
+        count: document.querySelector('#resultCount').textContent,
         footer: document.querySelector('#listFooter').textContent
       })`);
-      assert.equal(result.rows, 300);
-      assert.deepEqual(result.groups, ['Today', 'Yesterday']);
-      assert.deepEqual(result.groupCounts, ['150 items', '150 items']);
-      assert.equal(result.uniqueTitles, 300);
+      assert.ok(result.rows > 0 && result.rows <= 120, `window should stay near 100 rows, got ${result.rows}`);
+      assert.match(result.count, /300 items/);
       assert.match(result.footer, /Showing all 300 items/);
+
+      // Both date groups exist: Today at the top, Yesterday at the bottom.
+      await page.evaluate("document.querySelector('#content').scrollTop = 0");
+      await page.waitForFunction("document.querySelector('.group-title')?.textContent === 'Today'");
+      const top = await page.evaluate(`({
+        title: document.querySelector('.group-title')?.textContent,
+        count: document.querySelector('.group-count')?.textContent
+      })`);
+      assert.equal(top.title, 'Today');
+      assert.equal(top.count, '150 items');
+      await page.evaluate("document.querySelector('#content').scrollTop = document.querySelector('#content').scrollHeight");
+      await page.waitForFunction("[...document.querySelectorAll('.group-title')].pop()?.textContent === 'Yesterday'");
+      const bottom = await page.evaluate(`({
+        title: [...document.querySelectorAll('.group-title')].pop()?.textContent,
+        count: [...document.querySelectorAll('.group-count')].pop()?.textContent
+      })`);
+      assert.equal(bottom.title, 'Yesterday');
+      assert.equal(bottom.count, '150 items');
       assert.deepEqual(errors.errors, []);
     } finally {
       errors.stop();
@@ -332,18 +359,66 @@ export async function runDemoFeatures({ test, chrome, server }) {
     const { page, errors } = await openDemoPage(chrome, server, '/history.html?demo=1&count=5000&lang=en');
     try {
       await page.waitForFunction("document.querySelectorAll('.history-row').length > 0");
-      const initial = await page.evaluate("document.querySelectorAll('.history-row').length");
-      assert.equal(initial, 100);
+      const initial = await page.evaluate(`({
+        rows: document.querySelectorAll('.history-row').length,
+        count: document.querySelector('#resultCount').textContent
+      })`);
+      assert.ok(initial.rows > 0 && initial.rows <= 120, `first window should hold about 100 rows, got ${initial.rows}`);
+      assert.match(initial.count, /100 loaded/);
       const started = Date.now();
       await loadAllHistory(page, 5000);
       const elapsed = Date.now() - started;
       const result = await page.evaluate(`({
         rows: document.querySelectorAll('.history-row').length,
+        count: document.querySelector('#resultCount').textContent,
         footer: document.querySelector('#listFooter').textContent
       })`);
-      assert.equal(result.rows, 5000);
+      // All 5000 rows loaded, but only the visible window is in the DOM.
+      assert.ok(result.rows > 0 && result.rows <= 120, `window should stay near 100 rows, got ${result.rows}`);
+      assert.match(result.count, /5,000 items/);
       assert.match(result.footer, /Showing all 5,000 items/);
       console.log('    loaded 5000 rows in ' + (elapsed / 1000).toFixed(2) + 's');
+      console.log('    rendered DOM rows after load: ' + result.rows);
+
+      // Scrolling to the bottom reaches the oldest row: the demo data ends
+      // with "Fixture page 5000".
+      await page.evaluate("document.querySelector('#content').scrollTop = document.querySelector('#content').scrollHeight");
+      await page.waitForFunction("[...document.querySelectorAll('.row-title')].pop()?.textContent === 'Fixture page 5000'");
+      const lastTitle = await page.evaluate("[...document.querySelectorAll('.row-title')].pop()?.textContent || ''");
+      assert.equal(lastTitle, 'Fixture page 5000');
+
+      // Collapsing the first group hides its rows; the header stays, and
+      // the next group's first row takes the top of the window.
+      await page.evaluate("document.querySelector('#content').scrollTop = 0");
+      await page.waitForFunction("document.querySelector('.group-title')?.textContent === 'Today'");
+      await page.evaluate("document.querySelector('.group-head')?.click()");
+      await page.waitForFunction("document.querySelector('.history-group.is-collapsed')");
+      const collapsed = await page.evaluate(`({
+        collapsed: document.querySelectorAll('.history-group.is-collapsed').length,
+        collapsedTitle: document.querySelector('.history-group.is-collapsed .group-title')?.textContent,
+        firstRow: document.querySelector('.row-title')?.textContent
+      })`);
+      assert.equal(collapsed.collapsed, 1);
+      assert.equal(collapsed.collapsedTitle, 'Today');
+      // 180 of the 5000 fixture rows fall on Today; the rest start at 181.
+      assert.equal(collapsed.firstRow, 'Fixture page 181');
+
+      // Re-expand, then delete the first row: the undo toast appears and
+      // restores it, so the delayed-delete flow still works on a
+      // virtualized list.
+      await page.evaluate("document.querySelector('.history-group.is-collapsed .group-head')?.click()");
+      await page.waitForFunction("!document.querySelector('.history-group.is-collapsed')");
+      await page.waitForFunction("document.querySelector('.row-title')?.textContent === 'Fixture page 1'");
+      await page.evaluate("document.querySelector('.history-row .row-more')?.click()");
+      await page.waitForFunction("document.querySelector('#rowMenu [data-menu-action=\"delete\"]')");
+      await page.evaluate("document.querySelector('#rowMenu [data-menu-action=\"delete\"]')?.click()");
+      await page.waitForFunction("document.querySelector('#confirmOk')");
+      await page.evaluate("document.querySelector('#confirmOk')?.click()");
+      await page.waitForFunction("document.querySelector('.toast-action')");
+      const undoText = await page.evaluate("document.querySelector('.toast')?.textContent || ''");
+      assert.match(undoText, /Will delete 1 item in 30 seconds/);
+      await page.evaluate("document.querySelector('.toast-action')?.click()");
+      await page.waitForFunction("document.querySelector('.row-title')?.textContent === 'Fixture page 1'");
       assert.deepEqual(errors.errors, []);
     } finally {
       errors.stop();
@@ -409,7 +484,9 @@ export async function runDemoFeatures({ test, chrome, server }) {
   await test('demo delayed delete: row hides, undo restores it, expiry really deletes it', async () => {
     const { page, errors } = await openDemoPage(chrome, server, '/history.html?demo=1&lang=en');
     try {
-      await page.waitForFunction("document.querySelectorAll('.history-row').length === 36");
+      // Totals come from the result counter: the list is virtualized, so
+      // only the visible window is in the DOM.
+      await page.waitForFunction("document.querySelector('#resultCount').textContent.includes('36 items')");
       const firstTitle = await page.evaluate("document.querySelector('.history-row .row-title')?.textContent || ''");
       const firstUrl = await page.evaluate("document.querySelector('.history-row .row-title')?.getAttribute('href') || ''");
 
@@ -424,12 +501,12 @@ export async function runDemoFeatures({ test, chrome, server }) {
       // Undo inside the window: the row hides, then comes back, and the
       // demo history still holds the URL (deleteUrl was never called).
       await deleteFirstRow();
-      await page.waitForFunction("document.querySelectorAll('.history-row').length === 35");
+      await page.waitForFunction("document.querySelector('#resultCount').textContent.includes('35 items')");
       await page.waitForFunction("document.querySelector('.toast-action')");
       const undoText = await page.evaluate("document.querySelector('.toast')?.textContent || ''");
       assert.match(undoText, /Will delete 1 item in 30 seconds/);
       await page.evaluate("document.querySelector('.toast-action')?.click()");
-      await page.waitForFunction("document.querySelectorAll('.history-row').length === 36");
+      await page.waitForFunction("document.querySelector('#resultCount').textContent.includes('36 items')");
       assert.equal(
         await page.evaluate("document.querySelector('.history-row .row-title')?.textContent || ''"),
         firstTitle
@@ -440,9 +517,9 @@ export async function runDemoFeatures({ test, chrome, server }) {
       // cannot prove this in demo mode: demo data is rebuilt fresh on
       // every load, so check the live in-memory history instead.
       await deleteFirstRow();
-      await page.waitForFunction("document.querySelectorAll('.history-row').length === 35");
+      await page.waitForFunction("document.querySelector('#resultCount').textContent.includes('35 items')");
       await delay(32000);
-      assert.equal(await page.evaluate("document.querySelectorAll('.history-row').length"), 35);
+      assert.match(await page.evaluate("document.querySelector('#resultCount').textContent"), /35 items/);
       const remainingUrls = await page.evaluate(`(async () => {
         const results = await window.__demoChrome.history.search({ text: '', startTime: 0, endTime: Date.now(), maxResults: 100 });
         return results.map((entry) => entry.url);
@@ -466,7 +543,7 @@ export async function runDemoFeatures({ test, chrome, server }) {
     });
     const { page, errors } = await openDemoPage(chrome, server, '/history.html?demo=1&lang=en');
     try {
-      await page.waitForFunction("document.querySelectorAll('.history-row').length === 36");
+      await page.waitForFunction("document.querySelector('#resultCount').textContent.includes('36 items')");
 
       await page.evaluate("document.getElementById('exportBtn').click()");
       await page.waitForFunction("document.querySelector('#exportConfirm')");

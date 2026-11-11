@@ -61,7 +61,7 @@ NODE_USE_ENV_PROXY=0 node tests/run.mjs
 
 | Test | What it checks |
 | --- | --- |
-| demo history | `history.html?demo=1` renders **18 date groups / 36 rows** with no uncaught exceptions or `console.error` calls. |
+| demo history | `history.html?demo=1` loads **18 date groups / 36 rows** with no uncaught exceptions or `console.error` calls. The list is virtualized, so the totals are read from the result counter and the groups are collected by scrolling. |
 | demo popup | `popup.html?demo=1` at 378x500 has a 378px content width and no whole-window outer scrollbar. |
 | real extension | The unpacked extension loads via `--load-extension`, the path-derived ID matches `chrome.runtime.id`, and `chrome.history` exists. |
 | real action popup | `chrome.action.openPopup()` opens a real `popup.html` target at **378x500** with no outer scroll. |
@@ -73,8 +73,8 @@ NODE_USE_ENV_PROXY=0 node tests/run.mjs
 | demo i18n | English shell labels, date headers, count formatting, settings dialog, and immediate English -> Chinese -> English switching without reload. |
 | demo popup i18n/layout | English and Chinese labels, 37-row list, 378x500 and **378x470** viewports with no outer scroll, and an internally scrolling list. |
 | demo empty states | English history, recently closed and devices empty states contain no Chinese UI text. |
-| 300 tied timestamps | 300 rows split across Today/Yesterday with tied timestamps at midnight all load (100 + widened pagination), 150 rows per group, no duplicates. |
-| 5,000 rows | The full page scrolls/loads all 5,000 rows with no page errors. |
+| 300 tied timestamps | 300 rows split across Today/Yesterday with tied timestamps at midnight all load (100 + widened pagination), 150 rows per group. The list is virtualized, so totals are read from the result counter and the groups are checked at the top and bottom of the list. |
+| 5,000 rows | The full page scrolls/loads all 5,000 rows with no page errors. Only the visible window (about 100 rows) is in the DOM; scrolling to the bottom reaches the last row, collapsing the first group hides its rows, and the undo toast restores a deleted row. |
 | duplicate merge | 8 URL variants merge into 3 rows with visit counts 10/2/3; turning merge off gives 8 rows; turning it back on gives 3. |
 | popup 300 tied | The popup's 60-row pagination also widens across a tied boundary and loads all 300 rows. |
 | delayed delete | Deleting a row hides it and shows a 30-second undo toast; undo restores the row and leaves demo history untouched, while letting the window expire really deletes the URL. |
@@ -100,6 +100,9 @@ NODE_USE_ENV_PROXY=0 node tests/run.mjs
 - `pending-delete.test.mjs`: pending-delete snapshots, 30-second expiry,
   malformed-entry filtering, restore without duplication, and the
   chrome.storage.local round-trip.
+- `virtual-list.test.mjs`: flattening date groups into fixed-height blocks,
+  collapsed groups, window cuts with overscan, binary-search boundaries and
+  row block lookup.
 
 ## Demo fixtures
 

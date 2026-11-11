@@ -77,12 +77,25 @@ export async function runDemoBaseline({ test, chrome, server }) {
       // The list renders in one pass, but give async favicon/image work and
       // late console errors a chance to surface before asserting.
       await delay(250);
-      const counts = await page.evaluate(`({
-        groups: document.querySelectorAll('.history-group').length,
-        rows: document.querySelectorAll('.history-row').length
-      })`);
-      assert.equal(counts.rows, 36, 'demo history row count');
-      assert.equal(counts.groups, 18, 'demo history date-group count');
+      // The list is virtualized: only the visible window is in the DOM, so
+      // the loaded total comes from the result counter and the groups are
+      // collected by scrolling the list top to bottom.
+      const loaded = await page.evaluate(
+        "Number((document.querySelector('#resultCount').textContent || '').replace(/[^0-9]/g, ''))"
+      );
+      assert.equal(loaded, 36, 'demo history row count');
+      const groups = await page.evaluate(`(async () => {
+        const scroller = document.querySelector('#content');
+        const seen = new Set();
+        for (let guard = 0; guard < 20; guard += 1) {
+          for (const node of document.querySelectorAll('.group-title')) seen.add(node.textContent);
+          if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1) break;
+          scroller.scrollTop = scroller.scrollHeight;
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        }
+        return [...seen];
+      })()`);
+      assert.equal(groups.length, 18, 'demo history date-group count');
       assert.deepEqual(
         pageErrors.errors,
         [],
